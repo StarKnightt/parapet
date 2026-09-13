@@ -28,6 +28,10 @@ export interface PlayerEvents {
   onMantle?: (height: number, duration: number) => void;
   onSlideStart?: (speed: number) => void;
   onSlideEnd?: () => void;
+  /** `side` is -1 when the wall is on the left, +1 on the right. */
+  onWallRunStart?: (side: -1 | 1) => void;
+  onWallRunEnd?: () => void;
+  onWallJump?: () => void;
 }
 
 export class PlayerController {
@@ -67,6 +71,20 @@ export class PlayerController {
   sliding = false;
   private slideTime = 0;
   private slideCool = 0;
+
+  // Wall-run.
+  private wall: Collider | null = null;
+  /** Axis perpendicular to the wall face (0 = wall is at ±x, 2 = wall is at ±z). */
+  private wallAxis: 0 | 2 = 0;
+  /** +1 if the wall lies on the positive side of `wallAxis`. */
+  private wallDir = 1;
+  private wallTime = 0;
+  private wallCool = 0;
+  private lastWallId = -1;
+  /** Wall-runs need a deliberate jump; walking off a ledge beside a wall does not attach. */
+  private jumpedSinceGround = false;
+  private readonly probe: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
+  private readonly hits: Collider[] = [];
   private readonly box: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
   private readonly saved: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
   private readonly fwd = new THREE.Vector2();
@@ -95,6 +113,9 @@ export class PlayerController {
     this.crouched = false;
     this.sliding = false;
     this.height = PLAYER.height;
+    this.wall = null;
+    this.lastWallId = -1;
+    this.wallCool = 0;
   }
 
   fixedUpdate(dt: number, input: Input): void {
@@ -183,6 +204,42 @@ export class PlayerController {
     this.vel.x = this.hvel.x;
     this.vel.z = this.hvel.y;
 
+    // --- wall-run -----------------------------------------------------------------
+    this.wallCool = Math.max(0, this.wallCool - dt);
+    if (this.grounded) {
+      this.lastWallId = -1;
+      this.jumpedSinceGround = false;
+    }
+    if (
+      !this.wall &&
+      !this.grounded &&
+      !this.crouched &&
+      this.jumpedSinceGround &&
+      this.wallCool <= 0 &&
+      input.moveZ > 0 &&
+      this.vel.y > PLAYER.wallMaxFall
+    ) {
+      this.tryWallRun();
+    }
+    if (this.wall) {
+      this.wallTime += dt;
+      // Hold speed along the wall (light drag), kill the component into it.
+      const along = this.wallAxis === 0 ? 2 : 0;
+      const v = along === 0 ? this.vel.x : this.vel.z;
+      const nv = Math.sign(v) * Math.max(0, Math.abs(v) - PLAYER.wallDrag * dt);
+      if (along === 0) this.vel.x = nv;
+      else this.vel.z = nv;
+      if (this.wallAxis === 0) this.vel.x = this.wallDir * 0.6; // gentle press into the wall
+      else this.vel.z = this.wallDir * 0.6;
+      this.hvel.set(this.vel.x, this.vel.z);
+
+      if (this.jumpBuffer > 0) {
+        this.wallJump();
+      } else if (this.wallTime > PLAYER.wallMaxTime || Math.abs(nv) < PLAYER.wallMinSpeed * 0.6 || !this.wallStillThere()) {
+        this.detachWall();
+      }
+    }
+
     // --- jump ---------------------------------------------------------------------
     if (this.grounded) this.coyote = PLAYER.coyoteTime;
     else this.coyote = Math.max(0, this.coyote - dt);
@@ -192,6 +249,7 @@ export class PlayerController {
       this.grounded = false;
       this.coyote = 0;
       this.jumpBuffer = 0;
+      this.jumpedSinceGround = true;
       if (this.sliding) {
         // Slide-jump: keep the slide speed, stand up in the air.
         this.sliding = false;
@@ -202,7 +260,12 @@ export class PlayerController {
     }
 
     // --- gravity ------------------------------------------------------------------
-    this.vel.y = Math.max(this.vel.y - PLAYER.gravity * dt, -PLAYER.terminalVelocity);
+    let g = PLAYER.gravity;
+    if (this.wall) {
+      const k = clamp(this.wallTime / PLAYER.wallGravityRamp, 0, 1);
+      g *= PLAYER.wallGravityStart + (1 - PLAYER.wallGravityStart) * k * k;
+    }
+    this.vel.y = Math.max(this.vel.y - g * dt, -PLAYER.terminalVelocity);
 
     // --- resolve ------------------------------------------------------------------
     this.writeBox();
@@ -234,6 +297,7 @@ export class PlayerController {
         this.grounded = true;
         this.groundSurface = hitY.surface;
         this.groundTag = hitY.tag;
+        if (this.wall) this.detachWall();
         if (!this.wasGrounded) this.events.onLand?.(-vyBefore, hitY.surface);
       }
       this.vel.y = 0;
@@ -245,7 +309,7 @@ export class PlayerController {
     // Standing up while airborne if the slide ended mid-air and there is room.
     if (this.crouched && !this.sliding && !wantSlide) this.tryStand();
 
-    this.state = this.grounded ? (this.sliding ? "slide" : "ground") : "air";
+    this.state = this.grounded ? (this.sliding ? "slide" : "ground") : this.wall ? "wallrun" : "air";
 
     // --- stride -------------------------------------------------------------------
     if (this.grounded) {
@@ -351,6 +415,103 @@ export class PlayerController {
       this.wasGrounded = true;
       this.state = "ground";
     }
+  }
+
+  /** Look for a runnable wall beside the body and attach to it. */
+  private tryWallRun(): boolean {
+    this.writeBox();
+    for (const axis of [0, 2] as const) {
+      const along = axis === 0 ? 2 : 0;
+      const vAlong = along === 0 ? this.vel.x : this.vel.z;
+      if (Math.abs(vAlong) < PLAYER.wallMinSpeed) continue;
+      const vInto = axis === 0 ? this.vel.x : this.vel.z;
+      for (const dir of [1, -1]) {
+        // Moving away from this side: not a candidate.
+        if (vInto * dir < -0.8) continue;
+        this.copyBox(this.box, this.probe);
+        if (dir > 0) {
+          this.probe.min[axis] = this.box.max[axis];
+          this.probe.max[axis] = this.box.max[axis] + PLAYER.wallProbe;
+        } else {
+          this.probe.max[axis] = this.box.min[axis];
+          this.probe.min[axis] = this.box.min[axis] - PLAYER.wallProbe;
+        }
+        // Only the upper body counts: kerbs and rails are not walls.
+        this.probe.min[1] = this.box.min[1] + this.height * 0.45;
+        this.hits.length = 0;
+        this.world.query(this.probe, this.hits);
+        let best: Collider | null = null;
+        for (const c of this.hits) {
+          if (c.id === this.lastWallId) continue;
+          if (c.max[1] < this.box.min[1] + this.height * 0.9) continue; // must reach above the head-ish
+          if (!best || c.max[1] > best.max[1]) best = c;
+        }
+        if (!best) continue;
+
+        this.wall = best;
+        this.wallAxis = axis;
+        this.wallDir = dir;
+        this.wallTime = 0;
+        this.lastWallId = best.id;
+        // Snap flush to the face and kick upward a little.
+        const face = dir > 0 ? best.min[axis] : best.max[axis];
+        const r = PLAYER.radius;
+        if (axis === 0) this.pos.x = face - dir * (r + 0.005);
+        else this.pos.z = face - dir * (r + 0.005);
+        this.vel.y = Math.max(this.vel.y * 0.4, 0) + PLAYER.wallKick;
+        // Side relative to facing: wall on the right if its direction matches `right`.
+        const rightAlong = axis === 0 ? this.right.x : this.right.y;
+        this.events.onWallRunStart?.(rightAlong * dir > 0 ? 1 : -1);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private wallStillThere(): boolean {
+    if (!this.wall) return false;
+    this.writeBox();
+    this.copyBox(this.box, this.probe);
+    const axis = this.wallAxis;
+    if (this.wallDir > 0) {
+      this.probe.min[axis] = this.box.max[axis];
+      this.probe.max[axis] = this.box.max[axis] + PLAYER.wallProbe;
+    } else {
+      this.probe.max[axis] = this.box.min[axis];
+      this.probe.min[axis] = this.box.min[axis] - PLAYER.wallProbe;
+    }
+    this.probe.min[1] = this.box.min[1] + this.height * 0.45;
+    this.hits.length = 0;
+    this.world.query(this.probe, this.hits);
+    return this.hits.includes(this.wall);
+  }
+
+  private detachWall(): void {
+    if (!this.wall) return;
+    this.wall = null;
+    this.wallCool = PLAYER.wallCooldown;
+    this.events.onWallRunEnd?.();
+  }
+
+  private wallJump(): void {
+    if (!this.wall) return;
+    const axis = this.wallAxis;
+    const push = -this.wallDir * PLAYER.wallJumpPush;
+    if (axis === 0) {
+      this.vel.x = push;
+      this.vel.z *= PLAYER.wallJumpKeep;
+    } else {
+      this.vel.z = push;
+      this.vel.x *= PLAYER.wallJumpKeep;
+    }
+    this.hvel.set(this.vel.x, this.vel.z);
+    this.vel.y = JUMP_SPEED * PLAYER.wallJumpUp;
+    this.jumpBuffer = 0;
+    this.coyote = 0;
+    this.jumpedSinceGround = true;
+    this.detachWall();
+    this.events.onWallJump?.();
+    this.events.onJump?.();
   }
 
   private startSlide(): void {

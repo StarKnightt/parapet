@@ -74,6 +74,10 @@ export class Game {
       onFootstep: () => {},
       onMantle: () => this.rig.punchFov(3),
       onSlideStart: () => this.rig.punchFov(4),
+      // Lean away from the wall while running it.
+      onWallRunStart: (side) => (this.rig.extraRoll = -side * 8 * (Math.PI / 180)),
+      onWallRunEnd: () => (this.rig.extraRoll = 0),
+      onWallJump: () => this.rig.punchFov(4),
     };
     this.input.onLockChange = (locked) => {
       this.hud.setLocked(locked);

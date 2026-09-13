@@ -225,7 +225,64 @@ const stood = await stats();
 await releaseAll();
 report("crouch → stand", `h=${mid.height} → ${stood.height}`, "0.95 → 1.8", mid.height === 0.95 && stood.height === 1.8);
 
-// ---- 7. course A → B ------------------------------------------------------------------
+// ---- 7. wall-run (M3) -------------------------------------------------------------------
+// Tall wall z∈[10,10.4], x∈[-20,-2], top 26. Sprint west hugging it (body at z 9.2..9.9), jump.
+await pose(-10, 20, 9.55, 90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+let wj = false;
+const wr = await sample(3000, async (s) => {
+  if (!wj && s.pos[0] < -11) {
+    wj = true;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  }
+  if (wj && s.grounded && s.t > 0.6) return "stop";
+});
+await releaseAll();
+const wrSamples = wr.filter((s) => s.state === "wallrun");
+const wrTime = wrSamples.length ? wrSamples[wrSamples.length - 1].t - wrSamples[0].t : 0;
+const wrApex = Math.max(...wr.map((s) => s.pos[1])) - 20;
+const airStart = wr.findIndex((s) => !s.grounded);
+const airEnd = airStart >= 0 ? wr.slice(airStart).findIndex((s) => s.grounded) : -1;
+const airTime = airStart >= 0 && airEnd > 0 ? wr[airStart + airEnd].t - wr[airStart].t : 0;
+report("wall-run attaches", `${wrSamples.length} samples, ${wrTime.toFixed(2)}s`, "> 0.5 s in wallrun", wrTime > 0.5);
+report("wall-run extends air", `air ${airTime.toFixed(2)}s apex ${wrApex.toFixed(2)}m`, "air > 1.0 s, apex > 1.4 m", airTime > 1.0 && wrApex > 1.4);
+
+// Wall-jump: attach, then press Space mid-run → pushed off the wall toward -z.
+await pose(-10, 20, 9.55, 90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+let phase = 0;
+const wjr = await sample(3000, async (s) => {
+  if (phase === 0 && s.pos[0] < -11) {
+    phase = 1;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  } else if (phase === 1 && s.state === "wallrun") {
+    phase = 2;
+    setTimeout(async () => {
+      await key("Space", true);
+      setTimeout(() => key("Space", false), 60);
+    }, 250);
+  } else if (phase === 2 && s.grounded && s.t > 0.8) return "stop";
+});
+await releaseAll();
+const wjEnd = wjr[wjr.length - 1];
+report("wall-jump pushes off", `z=${wjEnd.pos[2].toFixed(2)} x=${wjEnd.pos[0].toFixed(1)}`, "z < 8.6 (started 9.55)", phase === 2 && wjEnd.pos[2] < 8.6);
+
+// No attach while merely walking beside a wall on the ground.
+await pose(-10, 20, 9.55, 90);
+await sleep(300);
+await key("KeyW", true);
+await sleep(900);
+const walkBy = await stats();
+await releaseAll();
+report("no wall-run on ground", walkBy.state, "ground", walkBy.state === "ground" && Math.abs(walkBy.pos[1] - 20) < 0.01);
+
+// ---- 8. course A → B ------------------------------------------------------------------
 await pose(3, 20, 5.3, -90);
 await sleep(300);
 await key("KeyW", true);

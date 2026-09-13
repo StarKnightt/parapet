@@ -63,6 +63,28 @@ export const PLAYER = {
   slideEndSpeed: 2.6,
   slideCooldown: 0.25,
 
+  // --- wall-run -----------------------------------------------------------------------
+  /** How far beside the body we look for a wall. */
+  wallProbe: 0.22,
+  /** Minimum speed along the wall to attach. */
+  wallMinSpeed: 4.0,
+  /** Falling faster than this and you slap the wall instead of running it. */
+  wallMaxFall: -7,
+  /** Small upward kick on attach (m/s). */
+  wallKick: 2.2,
+  /** Gravity multiplier at attach, ramping to 1 by `wallGravityRamp` seconds. */
+  wallGravityStart: 0.22,
+  wallGravityRamp: 0.9,
+  wallMaxTime: 1.15,
+  /** Speed lost along the wall per second (m/s²). */
+  wallDrag: 1.4,
+  /** Wall-jump: push away from the wall, and vertical as a fraction of a normal jump. */
+  wallJumpPush: 5.2,
+  wallJumpUp: 1.0,
+  wallJumpKeep: 0.92,
+  /** After leaving a wall you cannot re-attach to the same one until grounded. */
+  wallCooldown: 0.12,
+
   mouseSensitivity: 0.0021,
   pitchLimitDeg: 88,
 } as const;
