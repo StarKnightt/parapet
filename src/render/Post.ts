@@ -103,10 +103,11 @@ export class Post {
     return this.quality;
   }
 
-  /** `blur` 0..1 (sprint fraction), `time` seconds for grain. */
-  render(blur: number, time: number): void {
+  /** `blur` 0..1 (sprint fraction), `vignette` 0..1 (0.5 is the resting look). */
+  render(blur: number, time: number, vignette = 0.5): void {
     this.speed.uniforms.uBlur.value = blur;
     this.speed.uniforms.uTime.value = time;
+    this.speed.uniforms.uVignette.value = vignette;
     this.composer.render();
   }
 

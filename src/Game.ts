@@ -11,7 +11,8 @@ import { CameraRig } from "./player/CameraRig";
 import { PLAYER } from "./player/PlayerConfig";
 import { PlayerController } from "./player/PlayerController";
 import { Post } from "./render/Post";
-import { Hud } from "./ui/Hud";
+import { damp } from "./core/math";
+import { formatTime, Hud, type Results } from "./ui/Hud";
 import { CollisionWorld, type Aabb } from "./world/CollisionWorld";
 import { buildCourse, type CourseData } from "./world/Course";
 import { Kit } from "./world/Kit";
@@ -20,6 +21,16 @@ import { createMaterials } from "./world/materials";
 import { Sky } from "./world/Sky";
 
 const BEST_KEY = "parapet.best";
+const SPLITS_KEY = "parapet.splits";
+
+/** Terse end-of-run lines; the world is empty, the voice stays dry. */
+const LINES = {
+  first: ["Alive. Now do it faster.", "That's a line. Not a clean one."],
+  best: ["Clean.", "The city didn't see that coming.", "That one had no wasted steps."],
+  slower: ["You know where you lost it.", "The roofs are patient. Again.", "Close. Not that close."],
+  quick: ["No hesitation. That's the whole game.", "Nothing touched you."],
+};
+const pick = (arr: string[]): string => arr[Math.floor(Math.random() * arr.length)];
 
 export class Game {
   readonly renderer: THREE.WebGLRenderer;
@@ -44,6 +55,13 @@ export class Game {
   private finished = false;
   private checkpoint = 0;
   private offRouteTimer = 0;
+  /** Run time at each checkpoint index (0 = start, unused). */
+  private splits: number[] = [];
+  /** Simulation speed; dips on the finish line for a beat of slow motion. */
+  private timeScale = 1;
+  private finishT = -1;
+  private vignette = 0.5;
+  private falls = 0;
   private fps = 60;
   private debugOn = false;
 
@@ -98,7 +116,11 @@ export class Game {
     };
     this.input.onLockChange = (locked) => {
       this.hud.setLocked(locked);
-      if (locked) this.hud.fadeHint();
+      if (locked) {
+        this.hud.fadeHint();
+        // First time in: name the line while the player is still standing at the start.
+        if (!this.timerRunning && this.time === 0) this.showTitle();
+      }
     };
     this.input.onGesture = () => this.audio.start();
 
@@ -113,7 +135,7 @@ export class Game {
 
   // ---------------------------------------------------------------- run state
 
-  restart(): void {
+  restart(manual = false): void {
     const s = this.course.spawn;
     this.player.teleport(s.pos[0], s.pos[1] + 0.05, s.pos[2], s.yaw);
     this.rig.reset();
@@ -121,8 +143,23 @@ export class Game {
     this.time = 0;
     this.timerRunning = false;
     this.finished = false;
+    this.finishT = -1;
+    this.timeScale = 1;
+    this.splits = [];
+    this.falls = 0;
     this.hud.setTimer(0, false);
     this.hud.showHint();
+    this.hud.hideResults();
+    if (manual) {
+      this.hud.flash(false);
+      this.audio.restart();
+      this.showTitle();
+    }
+  }
+
+  private showTitle(): void {
+    const best = this.loadBest();
+    this.hud.showTitle("the concrete line", best === null ? "six roofs · one line · timer starts when you move" : `best ${formatTime(best)} · timer starts when you move`);
   }
 
   private respawn(): void {
@@ -130,6 +167,11 @@ export class Game {
     this.player.teleport(cp.spawn[0], cp.spawn[1] + 0.05, cp.spawn[2], cp.yaw);
     this.rig.reset();
     this.rig.punchFov(-6);
+    this.falls++;
+    this.hud.flash(true);
+    this.audio.respawn();
+    const name = this.course.checkpoints[this.checkpoint]?.name;
+    if (name) this.hud.showToast(`back to ${name}`, 1.2);
   }
 
   private inside(box: Aabb, p: THREE.Vector3): boolean {
@@ -141,24 +183,60 @@ export class Game {
     return v > 0 ? v : null;
   }
 
-  private finish(): void {
-    this.finished = true;
-    this.timerRunning = false;
-    this.audio.finish();
-    const best = this.loadBest();
-    if (best === null || this.time < best) {
-      localStorage.setItem(BEST_KEY, String(this.time));
-      this.hud.setBest(this.time);
-      this.hud.showToast("new best line", true, 3);
-    } else {
-      this.hud.showToast("line complete", true, 3);
+  private loadSplits(): number[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(SPLITS_KEY) ?? "[]");
+      return Array.isArray(v) ? v.map(Number) : [];
+    } catch {
+      return [];
     }
   }
 
+  private finish(): void {
+    this.finished = true;
+    this.timerRunning = false;
+    const best = this.loadBest();
+    const bestSplits = this.loadSplits();
+    const newBest = best === null || this.time < best;
+    this.audio.finish(newBest);
+
+    // The hit: a beat of slow motion, a wider lens, the frame closes in.
+    this.timeScale = 0.18;
+    this.finishT = 0;
+    this.rig.punchFov(9);
+    this.vignette = 0.9;
+
+    const cps = this.course.checkpoints;
+    const splits = [];
+    for (let i = 1; i < cps.length; i++) {
+      const t = this.splits[i];
+      if (t === undefined) continue;
+      const b = bestSplits[i];
+      splits.push({ name: cps[i].name, time: t, delta: b ? t - b : null });
+    }
+    splits.push({ name: "finish", time: this.time, delta: best === null ? null : this.time - best });
+
+    let line: string;
+    if (best === null) line = pick(LINES.first);
+    else if (newBest) line = pick(this.falls === 0 && this.time < 40 ? LINES.quick : LINES.best);
+    else line = pick(LINES.slower);
+    this.pendingResults = { time: this.time, best, newBest, splits, line };
+
+    if (newBest) {
+      localStorage.setItem(BEST_KEY, String(this.time));
+      const saved = [...this.splits];
+      saved[cps.length] = this.time;
+      localStorage.setItem(SPLITS_KEY, JSON.stringify(saved));
+      this.hud.setBest(this.time);
+    }
+  }
+  private pendingResults: Results | null = null;
+
   // ---------------------------------------------------------------- loop
 
-  private fixedUpdate(dt: number): void {
-    if (this.input.consume("restart")) this.restart();
+  private fixedUpdate(rawDt: number): void {
+    if (this.input.consume("restart")) this.restart(true);
+    const dt = rawDt * this.timeScale;
     if (this.input.consume("debug")) this.debugOn = this.hud.toggleDebug();
     if (this.input.consume("mute")) {
       this.audio.setMuted(!this.audio.isMuted);
@@ -180,7 +258,9 @@ export class Game {
     for (let i = this.checkpoint + 1; i < this.course.checkpoints.length; i++) {
       if (this.inside(this.course.checkpoints[i].trigger, p)) {
         this.checkpoint = i;
-        this.hud.showToast(this.course.checkpoints[i].name);
+        this.splits[i] = this.time;
+        const b = this.loadSplits()[i];
+        this.hud.showSplit(this.course.checkpoints[i].name, b ? this.time - b : null);
         this.audio.checkpoint();
         break;
       }
@@ -212,9 +292,20 @@ export class Game {
     this.hud.setTimer(this.time, this.timerRunning);
     this.audio.update(dt, this.player.speed, this.player.grounded ? 1 : 0, this.player.sliding && this.player.grounded, this.player.state === "wallrun");
 
+    // Finish sequence: hold the slow-mo for a beat, ease time back, then bring the card in.
+    if (this.finishT >= 0) {
+      this.finishT += dt;
+      if (this.finishT > 0.45) this.timeScale = damp(this.timeScale, 1, 0.35, dt);
+      if (this.finishT > 1.1 && this.pendingResults) {
+        this.hud.showResults(this.pendingResults);
+        this.pendingResults = null;
+      }
+    }
+    this.vignette = damp(this.vignette, 0.5, 1.2, dt);
+
     const blur = this.player.grounded || this.player.state === "air" ? Math.max(0, (this.player.speed - 6) / 4) : 0;
     if (location.search.includes("direct")) this.renderer.render(this.scene, this.rig.camera);
-    else this.post.render(Math.min(1, blur) * this.player.sprintBlend, this.elapsed);
+    else this.post.render(Math.min(1, blur) * this.player.sprintBlend, this.elapsed, this.vignette);
 
     this.fps = this.fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
     // Auto quality: sustained < 50 fps drops AO.

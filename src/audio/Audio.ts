@@ -169,10 +169,33 @@ export class GameAudio {
     this.tone(t + 0.09, 880, 0.24, 0.04, "sine");
   }
 
-  finish(): void {
+  /** Crossing the line: a low hit, then a slow rising chord that hangs in the wind. */
+  finish(newBest: boolean): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    for (const [i, f] of [523, 659, 784, 1046].entries()) this.tone(t + i * 0.11, f, 0.5, 0.05, "sine");
+    this.thump(t, 140, 40, 0.5, 0.7);
+    this.burst(t, 0.5, 300, 0.6, 0.25, 90);
+    const chord = newBest ? [392, 494, 587, 784, 988] : [349, 440, 523, 698];
+    for (const [i, f] of chord.entries()) {
+      this.tone(t + 0.25 + i * 0.16, f, 1.6 - i * 0.12, 0.045, "sine");
+      this.tone(t + 0.25 + i * 0.16, f * 2, 0.9, 0.012, "triangle");
+    }
+  }
+
+  /** Fell off the line: a soft dark drop, no punishment sting. */
+  respawn(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.thump(t, 90, 30, 0.45, 0.5);
+    this.burst(t, 0.35, 420, 0.7, 0.14, 120);
+  }
+
+  /** R: a dry tick so the reset registers. */
+  restart(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 0.05, 2400, 2.5, 0.12);
+    this.tone(t, 330, 0.12, 0.03, "sine");
   }
 
   // ---------------------------------------------------------------- primitives
