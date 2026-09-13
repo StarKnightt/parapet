@@ -50,22 +50,45 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   const img = ctx.createImageData(size, size);
   const d = img.data;
   for (let i = 0; i < size * size; i++) {
-    const g = 172 + (rng() - 0.5) * 30 + (rng() - 0.5) * 12;
-    d[i * 4] = g + 5;
+    const g = 162 + (rng() - 0.5) * 34 + (rng() - 0.5) * 12;
+    d[i * 4] = g + 6;
     d[i * 4 + 1] = g + 3;
-    d[i * 4 + 2] = g - 4;
+    d[i * 4 + 2] = g - 6;
     d[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
-  // Aggregate: light and dark specks of varied size (what reads as "concrete" at 1–3 m).
-  for (let i = 0; i < 2600; i++) {
-    const light = rng() < 0.45;
-    const a = 0.12 + rng() * 0.3;
-    ctx.fillStyle = light ? `rgba(225,222,214,${a})` : `rgba(58,56,50,${a})`;
-    const s = 1 + rng() * rng() * 4;
+  // Aggregate: dense fine specks (1–2 cm at a 3 m tile) plus a sparse coarse layer.
+  for (let i = 0; i < 16000; i++) {
+    const light = rng() < 0.42;
+    const a = 0.18 + rng() * 0.34;
+    ctx.fillStyle = light ? `rgba(228,224,214,${a})` : `rgba(48,46,40,${a})`;
+    const s = 1.2 + rng() * rng() * 2.6;
     ctx.beginPath();
     ctx.ellipse(rng() * size, rng() * size, s, s * (0.6 + rng() * 0.6), rng() * 3, 0, Math.PI * 2);
     ctx.fill();
+  }
+  for (let i = 0; i < 700; i++) {
+    const a = 0.06 + rng() * 0.1;
+    ctx.fillStyle = rng() < 0.5 ? `rgba(230,226,216,${a})` : `rgba(60,58,50,${a})`;
+    const s = 6 + rng() * 12;
+    ctx.beginPath();
+    ctx.ellipse(rng() * size, rng() * size, s, s * (0.5 + rng() * 0.8), rng() * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Formwork tie holes on a loose grid.
+  for (let gx = 0; gx < 4; gx++) {
+    for (let gy = 0; gy < 4; gy++) {
+      const x = (gx + 0.5) * (size / 4) + (rng() - 0.5) * 30;
+      const y = (gy + 0.5) * (size / 4) + (rng() - 0.5) * 30;
+      ctx.fillStyle = "rgba(40,38,34,0.75)";
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(200,196,186,0.35)";
+      ctx.beginPath();
+      ctx.arc(x, y + 6, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Large tonal blotches (formwork pours, damp patches).
@@ -143,10 +166,10 @@ export function createMaterials(): MaterialSet {
   patchMaterial(glass);
 
   const metal = new THREE.MeshStandardMaterial({
-    color: 0x4a4d50,
-    roughness: 0.62,
-    metalness: 0.7,
-    envMapIntensity: 0.7,
+    color: 0x5c5b55,
+    roughness: 0.7,
+    metalness: 0.45,
+    envMapIntensity: 0.6,
     vertexColors: true,
   });
   patchMaterial(metal);
@@ -160,7 +183,7 @@ export function createMaterials(): MaterialSet {
   patchMaterial(paint);
 
   const dark = new THREE.MeshStandardMaterial({
-    color: 0x22221f,
+    color: 0x4a4842,
     roughness: 0.95,
     metalness: 0,
   });

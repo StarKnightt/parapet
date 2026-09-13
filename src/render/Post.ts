@@ -17,8 +17,8 @@ const SPEED_SHADER = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
     uBlur: { value: 0 },
-    uVignette: { value: 0.42 },
-    uGrain: { value: 0.028 },
+    uVignette: { value: 0.5 },
+    uGrain: { value: 0.045 },
     uTime: { value: 0 },
     uCenter: { value: new THREE.Vector2(0.5, 0.5) },
   },
@@ -49,8 +49,11 @@ const SPEED_SHADER = {
         col = texture2D(tDiffuse, vUv).rgb;
       }
       // Vignette.
-      float v = 1.0 - uVignette * smoothstep(0.35, 1.05, r * 1.25);
+      float v = 1.0 - uVignette * smoothstep(0.25, 1.0, r * 1.25);
       col *= v;
+      // Gentle contrast lift around mid-grey (linear space, pre tone map).
+      col = (col - 0.18) * 1.1 + 0.18;
+      col = max(col, 0.0);
       // Fine grain.
       col += (hash(vUv * 1000.0) - 0.5) * uGrain;
       gl_FragColor = vec4(col, 1.0);
@@ -74,9 +77,9 @@ export class Post {
     this.composer.addPass(new RenderPass(scene, camera));
 
     this.ao = new N8AOPass(scene, camera, size.x, size.y);
-    this.ao.configuration.aoRadius = 2.6;
-    this.ao.configuration.distanceFalloff = 1.0;
-    this.ao.configuration.intensity = 4.5;
+    this.ao.configuration.aoRadius = 1.0;
+    this.ao.configuration.distanceFalloff = 0.6;
+    this.ao.configuration.intensity = 5.5;
     this.ao.configuration.halfRes = true;
     this.ao.configuration.gammaCorrection = false;
     this.ao.configuration.screenSpaceRadius = false;

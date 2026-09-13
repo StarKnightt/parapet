@@ -6,13 +6,13 @@
  */
 import * as THREE from "three";
 
-export const SUN_DIR = new THREE.Vector3(0.45, 0.32, -0.66).normalize();
+export const SUN_DIR = new THREE.Vector3(0.45, 0.5, -0.66).normalize();
 
 export const SKY = {
-  zenith: new THREE.Color(0xaeb2b5),
-  horizon: new THREE.Color(0xd8d6cf),
-  cloudDark: new THREE.Color(0xa6aaad),
-  cloudLight: new THREE.Color(0xd6d7d5),
+  zenith: new THREE.Color(0x8e9194),
+  horizon: new THREE.Color(0xd9d5cd),
+  cloudDark: new THREE.Color(0x8b8f93),
+  cloudLight: new THREE.Color(0xd8d8d4),
   sun: new THREE.Color(0xf2e2c8),
 };
 
@@ -48,13 +48,15 @@ const frag = /* glsl */ `
     vec3 col = mix(horizon, zenith, t);
     // Cloud deck: project onto a plane at height so the sky has perspective.
     if (h > 0.005) {
+      // Stretched ~3:1 along the wind axis so the deck reads as streaked stratus.
       vec2 uv = d.xz / (h + 0.12) * 1.6 + vec2(uTime * 0.008, uTime * 0.004);
+      uv = vec2(uv.x * 0.6, uv.y * 1.0) * 0.8;
       float c = fbm(uv);
       float c2 = fbm(uv * 3.1 + 5.0);
-      float cloud = smoothstep(0.3, 0.8, c * 0.7 + c2 * 0.3);
+      float cloud = smoothstep(0.28, 0.78, c * 0.7 + c2 * 0.3);
       vec3 cloudCol = mix(cloudDark, cloudLight, cloud);
       float cover = smoothstep(0.0, 0.25, h);
-      col = mix(col, cloudCol, cover * 0.7);
+      col = mix(col, cloudCol, cover * 0.9);
       // Thin the deck near the horizon so it fades into haze.
       col = mix(horizon, col, smoothstep(0.0, 0.22, h));
     } else {

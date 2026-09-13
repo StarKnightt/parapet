@@ -17,7 +17,7 @@ export class Lighting {
 
   constructor(scene: THREE.Scene) {
     // Overcast: a soft, slightly warm key through cloud. Shadows stay but are low-contrast.
-    this.sun = new THREE.DirectionalLight(0xfff1dc, 1.35);
+    this.sun = new THREE.DirectionalLight(0xffeedd, 2.3);
     this.sun.castShadow = true;
     const s = this.sun.shadow;
     s.mapSize.set(SHADOW_MAP, SHADOW_MAP);
@@ -33,7 +33,7 @@ export class Lighting {
     scene.add(this.sun);
     scene.add(this.sun.target);
 
-    this.hemi = new THREE.HemisphereLight(0xcfd2d0, 0x4e4a44, 1.25);
+    this.hemi = new THREE.HemisphereLight(0xb8c0c8, 0x3e3a34, 1.15);
     scene.add(this.hemi);
 
     // Light-space basis for texel snapping.
