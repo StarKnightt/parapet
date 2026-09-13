@@ -36,6 +36,11 @@ export class CameraRig {
     this.camera = new THREE.PerspectiveCamera(BASE_FOV, aspect, 0.08, 600);
   }
 
+  /** Current landing-spring offset (negative = camera dipped). */
+  get dip(): number {
+    return this.dipY;
+  }
+
   /** Called on landing: impact speed (m/s) → spring kick. */
   land(impact: number): void {
     const soft = PLAYER.softLand;
@@ -107,8 +112,9 @@ export class CameraRig {
       this.tmp.z + rz * bobX,
     );
 
-    // Landing dip also nods the view down a touch, so the spring reads in the horizon line.
-    this.euler.set(player.pitch + this.dipY * 0.45, player.yaw, this.roll);
+    // Landing dip nods the view down a touch; a mantle nods down toward the hands then up.
+    const mantleNod = -0.30 * Math.sin(player.mantleT * Math.PI);
+    this.euler.set(player.pitch + this.dipY * 0.45 + mantleNod, player.yaw, this.roll);
     this.camera.quaternion.setFromEuler(this.euler);
 
     this.fovPunch *= Math.exp(-dt / 0.18);

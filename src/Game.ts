@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { GameAudio } from "./audio/Audio";
 import { Input } from "./core/Input";
 import { Loop } from "./core/Loop";
+import { Body } from "./player/Body";
 import { CameraRig } from "./player/CameraRig";
 import { PLAYER } from "./player/PlayerConfig";
 import { PlayerController } from "./player/PlayerController";
@@ -27,6 +28,7 @@ export class Game {
   readonly input: Input;
   readonly player: PlayerController;
   readonly rig: CameraRig;
+  readonly body: Body;
   readonly hud: Hud;
   readonly lighting: Lighting;
   readonly sky: Sky;
@@ -65,6 +67,7 @@ export class Game {
     this.input = new Input(canvas);
     this.player = new PlayerController(this.world);
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
+    this.body = new Body(this.scene);
     this.post = new Post(this.renderer, this.scene, this.rig.camera);
     this.hud = new Hud(hudRoot);
     this.hud.setBest(this.loadBest());
@@ -201,6 +204,7 @@ export class Game {
   private frameUpdate(dt: number, alpha: number): void {
     this.rig.look(this.input, this.player);
     this.rig.update(dt, alpha, this.player, this.input);
+    this.body.update(dt, alpha, this.player, this.rig.camera, this.rig.dip);
     this.lighting.follow(this.rig.camera.position);
     this.elapsed += dt;
     this.sky.update(this.elapsed, this.rig.camera.position);

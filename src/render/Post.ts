@@ -18,7 +18,7 @@ const SPEED_SHADER = {
     tDiffuse: { value: null as THREE.Texture | null },
     uBlur: { value: 0 },
     uVignette: { value: 0.5 },
-    uGrain: { value: 0.045 },
+    uGrain: { value: 0.012 },
     uTime: { value: 0 },
     uCenter: { value: new THREE.Vector2(0.5, 0.5) },
   },
@@ -29,7 +29,7 @@ const SPEED_SHADER = {
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse; uniform float uBlur; uniform float uVignette; uniform float uGrain; uniform float uTime; uniform vec2 uCenter;
     varying vec2 vUv;
-    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453); }
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main() {
       vec2 toC = vUv - uCenter;
       float r = length(toC);
@@ -54,7 +54,7 @@ const SPEED_SHADER = {
       // Gentle contrast lift around mid-grey (linear space, pre tone map).
       col = (col - 0.18) * 1.1 + 0.18;
       col = max(col, 0.0);
-      // Fine grain.
+      // Static, very fine grain (no per-frame reseed: animated grain reads as screen jitter).
       col += (hash(vUv * 1000.0) - 0.5) * uGrain;
       gl_FragColor = vec4(col, 1.0);
     }
@@ -84,6 +84,9 @@ export class Post {
     this.ao.configuration.gammaCorrection = false;
     this.ao.configuration.screenSpaceRadius = false;
     this.ao.setQualityMode("Medium");
+    // Stronger denoise: AO speckle shimmering under camera motion reads as jitter.
+    this.ao.configuration.denoiseSamples = 8;
+    this.ao.configuration.denoiseRadius = 12;
     if (!location.search.includes("noao")) this.composer.addPass(this.ao);
 
     this.speed = new ShaderPass(SPEED_SHADER);

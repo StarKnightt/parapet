@@ -64,6 +64,15 @@ export class PlayerController {
   private readonly mTo = new THREE.Vector3();
   private mT = 0;
   private mDuration = 0.3;
+  /** Height of the ledge being mantled (for the arm reach). */
+  mantleLedge = 0;
+  /** Which side the wall is on while wall-running, relative to facing (0 = none). */
+  wallSide: -1 | 0 | 1 = 0;
+
+  /** 0..1 through the current mantle (0 when not mantling). */
+  get mantleT(): number {
+    return this.state === "mantle" ? this.mT : 0;
+  }
   private readonly mExit = new THREE.Vector2();
 
   // Slide / crouch.
@@ -430,6 +439,7 @@ export class PlayerController {
     const k = clamp((ledge - PLAYER.stepHeight) / (PLAYER.mantleMaxHeight - PLAYER.stepHeight), 0, 1);
     this.mDuration = PLAYER.mantleDurationMin + (PLAYER.mantleDurationMax - PLAYER.mantleDurationMin) * k;
     this.mT = 0;
+    this.mantleLedge = ledge;
 
     // Keep some approach speed, redirected over the ledge.
     const approach = floorBeyond ? clamp(this.speed * PLAYER.mantleKeep, 3, 7) : 0;
@@ -512,7 +522,8 @@ export class PlayerController {
         this.jumpBuffer = 0; // a press buffered before contact must not fire a same-tick wall-jump
         // Side relative to facing: wall on the right if its direction matches `right`.
         const rightAlong = axis === 0 ? this.right.x : this.right.y;
-        this.events.onWallRunStart?.(rightAlong * dir > 0 ? 1 : -1);
+        this.wallSide = rightAlong * dir > 0 ? 1 : -1;
+        this.events.onWallRunStart?.(this.wallSide);
         return true;
       }
     }
@@ -540,6 +551,7 @@ export class PlayerController {
   private detachWall(): void {
     if (!this.wall) return;
     this.wall = null;
+    this.wallSide = 0;
     this.wallCool = PLAYER.wallCooldown;
     this.events.onWallRunEnd?.();
   }

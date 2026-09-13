@@ -334,7 +334,9 @@ export class Kit {
       const z0 = o.z0 + inset;
       const z1 = o.z1 - inset;
       const yTop = t === tiers - 1 ? o.top : y + H * fractions[t];
-      this.box([x0, y, z0], [x1, yTop, z1], { ...common, tint });
+      // The top tier stops under the cap slab so the two never share a coplanar top (z-fight).
+      const hasCap = t === tiers - 1 && o.cap !== false;
+      this.box([x0, y, z0], [x1, hasCap ? yTop - 0.6 : yTop, z1], { ...common, tint });
       this.decorate(x0, x1, z0, z1, y, yTop, ribFaces, tint, shadow, detail, spacing, !blind, finD);
       // Spandrel bands (heavy horizontals) on tier 0.
       if (o.bands !== false && t === 0) {
@@ -439,13 +441,14 @@ export class Kit {
     b(u - W / 2, u + W / 2, y0 + h, y0 + H, lo, hi, common);
     b(u - W / 2, u - w / 2, y0, y0 + h, lo, hi, common);
     b(u + w / 2, u + W / 2, y0, y0 + h, lo, hi, common);
-    const backLo = out > 0 ? inner - t : inner;
-    const backHi = out > 0 ? inner : inner + t;
+    // Back wall sits 2 cm proud of the mass behind it so its face never z-fights the mass face.
+    const backLo = out > 0 ? inner - t : inner - 0.02;
+    const backHi = out > 0 ? inner + 0.02 : inner + t;
     b(u - W / 2, u + W / 2, y0 - t, y0 + H, backLo, backHi, { tint: 0x6f6b64, tag: opts.tag });
-    // Arched face slab flush with the facade.
+    // Arched face slab, 3 cm proud of the facade plane (again: no coplanar faces).
     if (opts.arch !== false) {
-      const faceLo = out > 0 ? faceCoord - 0.5 : faceCoord;
-      const faceHi = out > 0 ? faceCoord : faceCoord + 0.5;
+      const faceLo = out > 0 ? faceCoord - 0.5 : faceCoord - 0.03;
+      const faceHi = out > 0 ? faceCoord + 0.03 : faceCoord + 0.5;
       this.archWall(axis === 0 ? 0 : 2, u - W / 2, u + W / 2, y0, y0 + H + 0.6, faceLo, faceHi, [{ u, w: w - 0.2, h: h - 0.1 }], { tint, tag: opts.tag });
     }
     // Lamp strip on the ceiling and a warm point light just inside.
