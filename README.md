@@ -3,13 +3,19 @@
 First-person rooftop parkour in the browser. Run, vault, slide and wall-run across a
 brutalist city. No combat — movement is the whole game.
 
+**Play:** https://starknightt.github.io/parapet/ (Chrome desktop; click to lock the mouse)
+
 ```bash
 pnpm install
 pnpm dev          # http://localhost:5311
 pnpm build        # static site in dist/
 ```
 
-Controls: `WASD` move · `Shift` sprint · `Space` jump · `Ctrl`/`C` slide · `R` restart · `F3` debug readout · `1–9` teleport to checkpoints (dev).
+Controls: `WASD` move · `Shift` sprint · `Space` jump · `Ctrl`/`C` slide · `M` mute · `R` restart · `F3` debug readout · `1–9` teleport to checkpoints (dev).
+
+Moves: push into a chest-high ledge to mantle; hold slide at speed to drop under pipe racks (slide-jump keeps the speed); jump beside a tall wall while sprinting to wall-run, jump again to kick off it.
+
+Deploys to GitHub Pages on every push to `master` (`.github/workflows/pages.yml`).
 
 ## Layout
 
