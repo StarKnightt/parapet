@@ -72,6 +72,8 @@ export class Game {
       onStepUp: (dy) => this.rig.stepUp(dy),
       onJump: () => {},
       onFootstep: () => {},
+      onMantle: () => this.rig.punchFov(3),
+      onSlideStart: () => this.rig.punchFov(4),
     };
     this.input.onLockChange = (locked) => {
       this.hud.setLocked(locked);
@@ -244,6 +246,7 @@ export class Game {
       speed: this.player.speed,
       grounded: this.player.grounded,
       state: this.player.state,
+      height: this.player.height,
       checkpoint: this.checkpoint,
       time: this.time,
       finished: this.finished,

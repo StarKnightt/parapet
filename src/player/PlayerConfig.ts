@@ -37,6 +37,32 @@ export const PLAYER = {
   /** Respawn when this far below the active checkpoint. */
   killDepth: 14,
 
+  // --- mantle / vault ---------------------------------------------------------------
+  /** Ledges up to this far above the feet are climbed (from the ground: 1.5 m; jumping: ~2.7 m). */
+  mantleMaxHeight: 1.5,
+  /** How far the body ends past the ledge face (from the face to the box's near side). */
+  mantleInset: 0.12,
+  mantleDurationMin: 0.22,
+  mantleDurationMax: 0.46,
+  /** Forward speed kept after a mantle, as a fraction of approach speed; clamped to [3, 7]. */
+  mantleKeep: 0.8,
+
+  // --- slide ------------------------------------------------------------------------
+  crouchHeight: 0.95,
+  crouchSpeed: 2.6,
+  /** Minimum ground speed to start a slide. */
+  slideMinSpeed: 5.0,
+  slideBoost: 1.8,
+  slideMaxSpeed: 10.5,
+  /** Low friction while the slide is "fresh", then it bites. */
+  slideFreshTime: 0.6,
+  slideFrictionFresh: 3.5,
+  slideFriction: 11,
+  /** Steering while sliding: velocity direction turns toward input at this many rad/s. */
+  slideSteer: 1.4,
+  slideEndSpeed: 2.6,
+  slideCooldown: 0.25,
+
   mouseSensitivity: 0.0021,
   pitchLimitDeg: 88,
 } as const;

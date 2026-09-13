@@ -129,16 +129,103 @@ const step = await sample(1200);
 await releaseAll();
 const stepY = Math.max(...step.map((s) => s.pos[1])) - 20;
 report("auto step 0.4 m", stepY.toFixed(2), "0.40", Math.abs(stepY - 0.4) < 0.02);
-// 0.6 m block at i=2 → z -6..-4 must NOT be stepped.
+// 0.6 m block at i=2 → z -6..-4 is above step height: it must be a mantle, not a step.
 await pose(-4, 20, -5, 90);
 await sleep(300);
 await key("KeyW", true);
-const wall = await sample(1200);
+const wall = await sample(1200, (s) => (s.grounded && s.pos[1] > 20.55 ? "stop" : undefined));
 await releaseAll();
 const wallY = Math.max(...wall.map((s) => s.pos[1])) - 20;
-report("0.6 m block is a wall", wallY.toFixed(2), "0.00", wallY < 0.01);
+const wallMantled = wall.some((s) => s.state === "mantle");
+report("0.6 m block mantles", `${wallY.toFixed(2)} mantle=${wallMantled}`, "0.60 via mantle", Math.abs(wallY - 0.6) < 0.03 && wallMantled);
 
-// ---- 5. course A → B ------------------------------------------------------------------
+// ---- 5. mantle (M2) ---------------------------------------------------------------------
+// 1.25 m block at i=5 → z 3..5. Walk into it: should end on top (y = 21.25).
+await pose(-4, 20, 4, 90);
+await sleep(300);
+await key("KeyW", true);
+const m1 = await sample(1500, (s) => (s.grounded && s.pos[1] > 21.2 ? "stop" : undefined));
+await releaseAll();
+const m1End = m1[m1.length - 1];
+const m1States = new Set(m1.map((s) => s.state));
+report("mantle 1.25 m (walk)", `y=${m1End.pos[1].toFixed(2)} x=${m1End.pos[0].toFixed(1)} states=${[...m1States].join(",")}`, "y=21.25, x<-7, mantle seen", Math.abs(m1End.pos[1] - 21.25) < 0.03 && m1End.pos[0] < -7 && m1States.has("mantle"));
+
+// 2.0 m block at i=7 → z 9..11 (lane z=9.4 stays clear of the tall wall at z≥10).
+// Needs a jump: press Space near the face, mantle at the apex.
+await pose(-4, 20, 9.4, 90);
+await sleep(300);
+await key("KeyW", true);
+let mj = false;
+const m2 = await sample(2200, async (s) => {
+  if (!mj && s.pos[0] < -5.6) {
+    mj = true;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  }
+  if (s.pos[1] > 21.9 && s.grounded && s.pos[0] < -7) return "stop";
+});
+await releaseAll();
+const m2End = m2[m2.length - 1];
+report("mantle 2.0 m (jump)", `y=${m2End.pos[1].toFixed(2)} x=${m2End.pos[0].toFixed(1)}`, "y=22.0, x<-7", Math.abs(m2End.pos[1] - 22) < 0.03 && m2End.pos[0] < -7 && m2End.grounded);
+
+// Mantle must not trigger without pushing into the face: stand still next to the 1.0 block (i=4 → z 0..2).
+await pose(-6.65, 20, 1, 90);
+await sleep(600);
+const idle = await stats();
+report("no mantle without input", `y=${idle.pos[1].toFixed(2)} ${idle.state}`, "y=20.00", Math.abs(idle.pos[1] - 20) < 0.01);
+
+// ---- 6. slide (M2) ----------------------------------------------------------------------
+// Sprint west along the lane, slide at x < -8: expect crouch height, speed boost, and passing
+// under the 1.2 m bar at x ≈ -19.3 (a standing body would be stopped there).
+await pose(-3, 20, LANE, 90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+let slid = false;
+let slideStart = null;
+const sl = await sample(3500, async (s) => {
+  if (!slid && s.pos[0] < -8) {
+    slid = true;
+    slideStart = s.pos[0];
+    await key("ControlLeft", true);
+  }
+  if (s.pos[0] < -20.5) return "stop";
+});
+await releaseAll();
+const slEnd = sl[sl.length - 1];
+const slPeak = Math.max(...sl.filter((s) => s.state === "slide").map((s) => s.speed), 0);
+const slHeight = Math.min(...sl.map((s) => s.height));
+const slideSamples = sl.filter((s) => s.state === "slide");
+const slideDist = slideSamples.length ? slideStart - Math.min(...slideSamples.map((s) => s.pos[0])) : 0;
+report("slide peak speed", slPeak.toFixed(2), "≈10.3 (8.5+1.8)", slPeak > 9.9 && slPeak < 10.6);
+report("slide crouch height", slHeight.toFixed(2), "0.95", Math.abs(slHeight - 0.95) < 0.01);
+report("slide passes 1.2 m bar", `x=${slEnd.pos[0].toFixed(1)} y=${slEnd.pos[1].toFixed(2)} slideDist=${slideDist.toFixed(1)}`, "x<-20.5, y=20", slEnd.pos[0] < -20.5 && Math.abs(slEnd.pos[1] - 20) < 0.01);
+
+// Control: walking (standing) into the bar is blocked.
+await pose(-16, 20, LANE, 90);
+await sleep(300);
+await key("KeyW", true);
+await sleep(1200);
+const blocked = await stats();
+await releaseAll();
+report("standing blocked by bar", `x=${blocked.pos[0].toFixed(2)} h=${blocked.height}`, "x≈-18.75 (stopped)", blocked.pos[0] > -18.9 && blocked.height === 1.8);
+
+// Stand back up after releasing Ctrl in the open.
+await pose(-3, 20, LANE + 2, 90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+await sleep(700);
+await key("ControlLeft", true);
+await sleep(400);
+const mid = await stats();
+await key("ControlLeft", false);
+await sleep(300);
+const stood = await stats();
+await releaseAll();
+report("crouch → stand", `h=${mid.height} → ${stood.height}`, "0.95 → 1.8", mid.height === 0.95 && stood.height === 1.8);
+
+// ---- 7. course A → B ------------------------------------------------------------------
 await pose(3, 20, 5.3, -90);
 await sleep(300);
 await key("KeyW", true);

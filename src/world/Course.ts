@@ -131,6 +131,10 @@ export function buildCourse(kit: Kit): CourseData {
   }
   // Tall wall for mantle-height testing and a long flat wall for wall-run testing.
   kit.box([-20, P, 10], [-2, P + 6, 10.4], { tint: 0xaaa69f, tag: "pad" });
+  // Slide-under bar across the z=-13 lane: 1.2 m clearance (standing body is 1.8 m).
+  kit.box([-19.5, P + 1.2, -14], [-19.1, P + 1.6, -12], { mat: "metal", tint: 0x7a7c80, tag: "pad" });
+  kit.box([-19.5, P, -14.3], [-19.1, P + 1.6, -14], { mat: "metal", tint: 0x7a7c80, tag: "pad" });
+  kit.box([-19.5, P, -12], [-19.1, P + 1.6, -11.7], { mat: "metal", tint: 0x7a7c80, tag: "pad" });
   teleports.push({ pos: [-4, P, 0], yaw: Math.PI / 2, name: "Calibration pad" });
 
   // ---------------------------------------------------------------- neighbourhood + skyline

@@ -25,6 +25,7 @@ export class CameraRig {
   private dipV = 0;
   private stepOffset = 0;
   private roll = 0;
+  private eyeH: number = PLAYER.eyeHeight;
   /** External roll request in radians (wall-run sets this). */
   extraRoll = 0;
   private readonly mouse = { x: 0, y: 0 };
@@ -86,10 +87,12 @@ export class CameraRig {
 
     // Interpolated body position.
     this.tmp.lerpVectors(player.prevPos, player.pos, alpha);
-    const eye = PLAYER.eyeHeight * (player.height / PLAYER.height);
+    // Eye height follows crouch/stand with a short lag (drop fast, rise a touch slower).
+    const eyeTarget = PLAYER.eyeHeight * (player.height / PLAYER.height);
+    this.eyeH = damp(this.eyeH, eyeTarget, eyeTarget < this.eyeH ? 0.06 : 0.1, dt);
     this.camera.position.set(
       this.tmp.x + rx * bobX,
-      this.tmp.y + eye + bobY + this.dipY + this.stepOffset,
+      this.tmp.y + this.eyeH + bobY + this.dipY + this.stepOffset,
       this.tmp.z + rz * bobX,
     );
 

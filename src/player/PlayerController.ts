@@ -7,7 +7,7 @@
  * as additional states in `src/player/moves/`.
  */
 import * as THREE from "three";
-import { clamp, moveToward } from "../core/math";
+import { clamp, easeOutCubic, moveToward, smoothstep } from "../core/math";
 import type { Input } from "../core/Input";
 import type { Aabb, Collider, CollisionWorld, Surface } from "../world/CollisionWorld";
 import { JUMP_SPEED, PLAYER } from "./PlayerConfig";
@@ -24,6 +24,10 @@ export interface PlayerEvents {
   onFootstep?: (surface: Surface, speed: number) => void;
   /** Body was lifted `dy` metres by the auto step; the camera smooths it away. */
   onStepUp?: (dy: number) => void;
+  /** Mantle started; `height` is the ledge height climbed, `duration` seconds. */
+  onMantle?: (height: number, duration: number) => void;
+  onSlideStart?: (speed: number) => void;
+  onSlideEnd?: () => void;
 }
 
 export class PlayerController {
@@ -39,7 +43,7 @@ export class PlayerController {
   grounded = false;
   groundSurface: Surface = "concrete";
   groundTag: string | undefined;
-  height = PLAYER.height;
+  height: number = PLAYER.height;
   /** Continuous stride counter (distance / stride length). Fractional part = bob phase. */
   stride = 0;
   /** 0..1 blend toward sprint speed (drives FOV). */
@@ -50,6 +54,19 @@ export class PlayerController {
   private jumpBuffer = 0;
   private wasGrounded = false;
   private lastStrideInt = 0;
+
+  // Mantle: scripted motion from `mFrom` to `mTo` over `mDuration`.
+  private readonly mFrom = new THREE.Vector3();
+  private readonly mTo = new THREE.Vector3();
+  private mT = 0;
+  private mDuration = 0.3;
+  private readonly mExit = new THREE.Vector2();
+
+  // Slide / crouch.
+  crouched = false;
+  sliding = false;
+  private slideTime = 0;
+  private slideCool = 0;
   private readonly box: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
   private readonly saved: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
   private readonly fwd = new THREE.Vector2();
@@ -75,11 +92,19 @@ export class PlayerController {
     this.wasGrounded = false;
     this.coyote = 0;
     this.jumpBuffer = 0;
+    this.crouched = false;
+    this.sliding = false;
+    this.height = PLAYER.height;
   }
 
   fixedUpdate(dt: number, input: Input): void {
     this.prevPos.copy(this.pos);
     this.wasGrounded = this.grounded;
+
+    if (this.state === "mantle") {
+      this.updateMantle(dt);
+      return;
+    }
 
     // --- intent -------------------------------------------------------------------
     // Three.js convention: yaw 0 looks down -z and +x is to the right.
@@ -89,16 +114,48 @@ export class PlayerController {
     const hasInput = this.wish.lengthSq() > 0;
     if (hasInput) this.wish.normalize();
 
-    const sprinting = input.sprint && input.moveZ > 0;
-    const targetSpeed = sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
+    const sprinting = input.sprint && input.moveZ > 0 && !this.crouched;
     this.sprintBlend = moveToward(this.sprintBlend, sprinting && hasInput ? 1 : 0, dt / 0.25);
 
     if (input.consume("jump")) this.jumpBuffer = PLAYER.jumpBuffer;
     else this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
 
+    // --- slide / crouch state -------------------------------------------------------
+    this.slideCool = Math.max(0, this.slideCool - dt);
+    const wantSlide = input.slideHeld;
+    if (!this.sliding && this.grounded && wantSlide && this.slideCool <= 0 && this.speed >= PLAYER.slideMinSpeed) {
+      this.startSlide();
+    }
+    if (this.sliding && this.grounded) this.slideTime += dt;
+    if (this.sliding && (!wantSlide || (this.grounded && this.speed < PLAYER.slideEndSpeed))) {
+      this.sliding = false;
+      this.slideCool = PLAYER.slideCooldown;
+      this.events.onSlideEnd?.();
+    }
+    if (this.crouched && !this.sliding && !wantSlide) this.tryStand();
+
+    const targetSpeed = this.crouched ? PLAYER.crouchSpeed : sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
+
     // --- horizontal velocity --------------------------------------------------------
     this.hvel.set(this.vel.x, this.vel.z);
-    if (this.grounded) {
+    if (this.grounded && this.sliding) {
+      // Slide: low friction that bites after `slideFreshTime`; gentle steering only.
+      const s = this.hvel.length();
+      const fr = this.slideTime < PLAYER.slideFreshTime ? PLAYER.slideFrictionFresh : PLAYER.slideFriction;
+      if (s > 0) {
+        this.hvel.multiplyScalar(Math.max(0, s - fr * dt) / s);
+        if (hasInput) {
+          const cur = Math.atan2(this.hvel.y, this.hvel.x);
+          const want = Math.atan2(this.wish.y, this.wish.x);
+          let d = want - cur;
+          while (d > Math.PI) d -= Math.PI * 2;
+          while (d < -Math.PI) d += Math.PI * 2;
+          const turn = clamp(d, -PLAYER.slideSteer * dt, PLAYER.slideSteer * dt);
+          const sp = this.hvel.length();
+          this.hvel.set(Math.cos(cur + turn) * sp, Math.sin(cur + turn) * sp);
+        }
+      }
+    } else if (this.grounded) {
       if (hasInput) {
         const tx = this.wish.x * targetSpeed;
         const ty = this.wish.y * targetSpeed;
@@ -135,6 +192,12 @@ export class PlayerController {
       this.grounded = false;
       this.coyote = 0;
       this.jumpBuffer = 0;
+      if (this.sliding) {
+        // Slide-jump: keep the slide speed, stand up in the air.
+        this.sliding = false;
+        this.slideCool = PLAYER.slideCooldown;
+        this.events.onSlideEnd?.();
+      }
       this.events.onJump?.();
     }
 
@@ -144,7 +207,9 @@ export class PlayerController {
     // --- resolve ------------------------------------------------------------------
     this.writeBox();
     this.moveHorizontal(0, this.vel.x * dt);
+    if ((this.state as MoveState) === "mantle") return; // moveHorizontal started a mantle
     this.moveHorizontal(2, this.vel.z * dt);
+    if ((this.state as MoveState) === "mantle") return;
 
     // Vertical. When we were grounded and are not rising, probe a little further down than
     // gravity alone would move us so the body stays glued to the roof (no grounded flicker);
@@ -177,7 +242,10 @@ export class PlayerController {
     }
     this.readBox();
 
-    this.state = this.grounded ? "ground" : "air";
+    // Standing up while airborne if the slide ended mid-air and there is room.
+    if (this.crouched && !this.sliding && !wantSlide) this.tryStand();
+
+    this.state = this.grounded ? (this.sliding ? "slide" : "ground") : "air";
 
     // --- stride -------------------------------------------------------------------
     if (this.grounded) {
@@ -203,9 +271,16 @@ export class PlayerController {
     const moved = this.box.min[axis] - startPos;
     const remaining = delta - moved;
 
-    // Step-up: only when the blocker's top is within reach and we are on or near the ground.
     const feetY = this.box.min[1];
     const ledge = hit.max[1] - feetY;
+
+    // Mantle: chest-high (or, mid-jump, anything within reach) while pushing into the face.
+    if (ledge > PLAYER.stepHeight && ledge <= PLAYER.mantleMaxHeight && !this.sliding && !this.crouched) {
+      const wishAlong = axis === 0 ? this.wish.x : this.wish.y;
+      if (wishAlong * Math.sign(delta) > 0.4 && this.tryMantle(axis, Math.sign(delta), hit, ledge)) return;
+    }
+
+    // Step-up: only when the blocker's top is within reach and we are on or near the ground.
     if (ledge > 0 && ledge <= PLAYER.stepHeight && (this.grounded || this.vel.y <= 0.5)) {
       this.copyBox(this.box, this.saved);
       const up = this.world.moveAxis(this.box, 1, ledge + 0.01);
@@ -225,6 +300,85 @@ export class PlayerController {
     // Genuine wall: kill velocity along this axis so we slide along it.
     if (axis === 0) this.vel.x = 0;
     else this.vel.z = 0;
+  }
+
+  /** Try to start a mantle onto `hit` approached along `axis` in direction `dir`. */
+  private tryMantle(axis: 0 | 2, dir: number, hit: Collider, ledge: number): boolean {
+    const w = PLAYER.radius * 2;
+    this.copyBox(this.box, this.saved);
+    // Target: standing on the ledge, inset just past its face, at full height.
+    this.saved.min[axis] = dir > 0 ? hit.min[axis] + PLAYER.mantleInset : hit.max[axis] - PLAYER.mantleInset - w;
+    this.saved.max[axis] = this.saved.min[axis] + w;
+    this.saved.min[1] = hit.max[1] + 0.02;
+    this.saved.max[1] = this.saved.min[1] + PLAYER.height;
+    if (this.world.overlapsAny(this.saved)) return false;
+
+    const r = PLAYER.radius;
+    this.readBox();
+    this.mFrom.copy(this.pos);
+    this.mTo.set(this.saved.min[0] + r, this.saved.min[1], this.saved.min[2] + r);
+    const k = clamp((ledge - PLAYER.stepHeight) / (PLAYER.mantleMaxHeight - PLAYER.stepHeight), 0, 1);
+    this.mDuration = PLAYER.mantleDurationMin + (PLAYER.mantleDurationMax - PLAYER.mantleDurationMin) * k;
+    this.mT = 0;
+
+    // Keep some approach speed, redirected over the ledge.
+    const approach = clamp(this.speed * PLAYER.mantleKeep, 3, 7);
+    this.mExit.set(0, 0);
+    if (axis === 0) this.mExit.x = dir * approach;
+    else this.mExit.y = dir * approach;
+
+    this.vel.set(0, 0, 0);
+    this.grounded = false;
+    this.coyote = 0;
+    this.jumpBuffer = 0;
+    this.state = "mantle";
+    this.events.onMantle?.(ledge, this.mDuration);
+    return true;
+  }
+
+  private updateMantle(dt: number): void {
+    this.mT = Math.min(1, this.mT + dt / this.mDuration);
+    // Rise first (fast), then push over the lip.
+    const up = easeOutCubic(Math.min(1, this.mT * 1.4));
+    const over = smoothstep((this.mT - 0.25) / 0.75);
+    this.pos.x = this.mFrom.x + (this.mTo.x - this.mFrom.x) * over;
+    this.pos.z = this.mFrom.z + (this.mTo.z - this.mFrom.z) * over;
+    this.pos.y = this.mFrom.y + (this.mTo.y - this.mFrom.y) * up;
+    if (this.mT >= 1) {
+      this.pos.copy(this.mTo);
+      this.vel.set(this.mExit.x, 0, this.mExit.y);
+      this.grounded = true;
+      this.wasGrounded = true;
+      this.state = "ground";
+    }
+  }
+
+  private startSlide(): void {
+    this.sliding = true;
+    this.crouched = true;
+    this.height = PLAYER.crouchHeight;
+    this.slideTime = 0;
+    const s = this.speed;
+    const boosted = Math.min(s + PLAYER.slideBoost, PLAYER.slideMaxSpeed);
+    if (s > 0) {
+      this.vel.x *= boosted / s;
+      this.vel.z *= boosted / s;
+    }
+    this.events.onSlideStart?.(boosted);
+  }
+
+  /** Stand up if there is headroom; otherwise stay crouched. */
+  private tryStand(): void {
+    const r = PLAYER.radius;
+    this.saved.min[0] = this.pos.x - r;
+    this.saved.min[1] = this.pos.y + 0.01;
+    this.saved.min[2] = this.pos.z - r;
+    this.saved.max[0] = this.pos.x + r;
+    this.saved.max[1] = this.pos.y + PLAYER.height;
+    this.saved.max[2] = this.pos.z + r;
+    if (this.world.overlapsAny(this.saved)) return;
+    this.crouched = false;
+    this.height = PLAYER.height;
   }
 
   private writeBox(): void {
