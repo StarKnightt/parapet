@@ -3,3 +3,4 @@ dist
 shots
 .DS_Store
 *.local
+ref/

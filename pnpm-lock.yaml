@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      n8ao:
+        specifier: ^2.0.1
+        version: 2.0.1(postprocessing@6.39.5(three@0.185.1))(three@0.185.1)
+      postprocessing:
+        specifier: ^6.39.5
+        version: 6.39.5(three@0.185.1)
       three:
         specifier: ^0.185.1
         version: 0.185.1
@@ -357,6 +363,12 @@ packages:
   meshoptimizer@1.1.1:
     resolution: {integrity: sha512-oRFNWJRDA/WTrVj7NWvqa5HqE1t9MYDj2VaWirQCzCCrAd2GHrqR/sQezCxiWATPNlKTcRaPRHPJwIRoPBAp5g==}
 
+  n8ao@2.0.1:
+    resolution: {integrity: sha512-MoP1QKUdj4/3cKEnhFl917t0eQwWGER1l43ckz5mNOPyYWGRDGQbVoTOQz/VBvy01in6QVNG+AL6Xxx5AjZBYA==}
+    peerDependencies:
+      postprocessing: '>=6.30.0'
+      three: '>=0.137'
+
   nanoid@3.3.19:
     resolution: {integrity: sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -382,6 +394,11 @@ packages:
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
     engines: {node: ^10 || ^12 || >=14}
+
+  postprocessing@6.39.5:
+    resolution: {integrity: sha512-YmH+t74J2X1lwYjKzK/tgs9C9kqWWPB9JwZiDF5mEf4BdCEAmEFbO8lXBA7NM0/j4g+x6FgD/Tt5/kT7ogbEDA==}
+    peerDependencies:
+      three: '>= 0.168.0 < 0.187.0'
 
   rolldown@1.2.8:
     resolution: {integrity: sha512-Z67nTmhZe7anqnM/EjI392w5i/ANUinjip7QYsOyN37oayduxt3ksdX0hf5OOamkAd53BiIHfbfSzfUmzKFQqQ==}
@@ -640,6 +657,11 @@ snapshots:
 
   meshoptimizer@1.1.1: {}
 
+  n8ao@2.0.1(postprocessing@6.39.5(three@0.185.1))(three@0.185.1):
+    dependencies:
+      postprocessing: 6.39.5(three@0.185.1)
+      three: 0.185.1
+
   nanoid@3.3.19: {}
 
   picocolors@1.1.1: {}
@@ -659,6 +681,10 @@ snapshots:
       nanoid: 3.3.19
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postprocessing@6.39.5(three@0.185.1):
+    dependencies:
+      three: 0.185.1
 
   rolldown@1.2.8:
     dependencies:

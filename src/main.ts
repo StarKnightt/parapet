@@ -6,6 +6,7 @@ declare global {
       setPose: (x: number, y: number, z: number, yawDeg: number, pitchDeg: number) => void;
       stats: () => Record<string, unknown>;
       key: (code: string, down: boolean) => void;
+      setQuality: (q: "high" | "low") => void;
       ready: boolean;
     };
   }
@@ -21,5 +22,6 @@ window.__parapet = {
   setPose: (x, y, z, yaw, pitch) => game.setPose(x, y, z, yaw, pitch),
   stats: () => game.stats(),
   key: (code, down) => game.key(code, down),
+  setQuality: (q) => game.setQuality(q),
   ready: true,
 };

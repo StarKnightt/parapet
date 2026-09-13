@@ -6,6 +6,7 @@
  */
 import * as THREE from "three";
 import { createRng } from "../core/math";
+import { patchMaterial } from "./shaderPatches";
 
 export type MaterialKey = "concrete" | "glass" | "metal" | "paint" | "dark";
 
@@ -45,17 +46,27 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   const rng = createRng(seed);
   const { canvas, ctx } = makeCanvas(size);
 
-  // Base and per-pixel grain.
+  // Base and per-pixel grain, with a coarser aggregate speckle layered on.
   const img = ctx.createImageData(size, size);
   const d = img.data;
   for (let i = 0; i < size * size; i++) {
-    const g = 178 + (rng() - 0.5) * 26 + (rng() - 0.5) * 10;
-    d[i * 4] = g + 4;
-    d[i * 4 + 1] = g + 2;
-    d[i * 4 + 2] = g - 2;
+    const g = 172 + (rng() - 0.5) * 30 + (rng() - 0.5) * 12;
+    d[i * 4] = g + 5;
+    d[i * 4 + 1] = g + 3;
+    d[i * 4 + 2] = g - 4;
     d[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
+  // Aggregate: light and dark specks of varied size (what reads as "concrete" at 1–3 m).
+  for (let i = 0; i < 2600; i++) {
+    const light = rng() < 0.45;
+    const a = 0.12 + rng() * 0.3;
+    ctx.fillStyle = light ? `rgba(225,222,214,${a})` : `rgba(58,56,50,${a})`;
+    const s = 1 + rng() * rng() * 4;
+    ctx.beginPath();
+    ctx.ellipse(rng() * size, rng() * size, s, s * (0.6 + rng() * 0.6), rng() * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // Large tonal blotches (formwork pours, damp patches).
   for (let i = 0; i < 22; i++) {
@@ -115,40 +126,45 @@ export function createMaterials(): MaterialSet {
     map,
     roughnessMap: rough,
     bumpMap: map,
-    bumpScale: 0.6,
+    bumpScale: 0.8,
     roughness: 1,
     metalness: 0,
     vertexColors: true,
-    envMapIntensity: 0.18,
+    envMapIntensity: 0.3,
   });
+  patchMaterial(concrete, { concrete: true, boxFrac: true });
 
   const glass = new THREE.MeshStandardMaterial({
-    color: 0x1b2129,
-    roughness: 0.12,
-    metalness: 0.85,
-    envMapIntensity: 1.2,
+    color: 0x14171a,
+    roughness: 0.3,
+    metalness: 0.6,
+    envMapIntensity: 0.9,
   });
+  patchMaterial(glass);
 
   const metal = new THREE.MeshStandardMaterial({
     color: 0x4a4d50,
-    roughness: 0.55,
-    metalness: 0.75,
-    envMapIntensity: 0.8,
+    roughness: 0.62,
+    metalness: 0.7,
+    envMapIntensity: 0.7,
     vertexColors: true,
   });
+  patchMaterial(metal);
 
   const paint = new THREE.MeshStandardMaterial({
     color: 0xb87a30,
-    roughness: 0.78,
+    roughness: 0.8,
     metalness: 0,
     envMapIntensity: 0.25,
   });
+  patchMaterial(paint);
 
   const dark = new THREE.MeshStandardMaterial({
-    color: 0x2a2a2c,
+    color: 0x22221f,
     roughness: 0.95,
     metalness: 0,
   });
+  patchMaterial(dark);
 
-  return { concrete, glass, metal, paint, dark, concreteTile: 4 };
+  return { concrete, glass, metal, paint, dark, concreteTile: 3 };
 }

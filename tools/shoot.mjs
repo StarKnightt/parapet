@@ -25,6 +25,7 @@ const TAG = arg("tag", "shot");
 const ONLY = arg("poses", "").split(",").filter(Boolean);
 const W = Number(arg("w", 1920));
 const H = Number(arg("h", 1080));
+const QUALITY = arg("quality", "high");
 
 /** x, y (feet), z, yaw° (−90 looks +x/east), pitch° (+ up). */
 const POSES = {
@@ -60,6 +61,7 @@ try {
   await page.waitForFunction(() => window.__parapet?.ready === true, null, { timeout: 60_000 });
   await page.waitForTimeout(800);
 
+  await page.evaluate((q) => window.__parapet.setQuality(q), QUALITY);
   const stats = await page.evaluate(() => window.__parapet.stats());
   console.log(`[gpu] ${stats.renderer}`);
   if (isSoftwareRenderer(stats.renderer)) throw new Error(`software renderer: ${stats.renderer}`);

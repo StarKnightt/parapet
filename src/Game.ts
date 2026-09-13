@@ -8,13 +8,14 @@ import { Loop } from "./core/Loop";
 import { CameraRig } from "./player/CameraRig";
 import { PLAYER } from "./player/PlayerConfig";
 import { PlayerController } from "./player/PlayerController";
+import { Post } from "./render/Post";
 import { Hud } from "./ui/Hud";
 import { CollisionWorld, type Aabb } from "./world/CollisionWorld";
 import { buildCourse, type CourseData } from "./world/Course";
 import { Kit } from "./world/Kit";
 import { Lighting } from "./world/Lighting";
 import { createMaterials } from "./world/materials";
-import { createSky } from "./world/Sky";
+import { Sky } from "./world/Sky";
 
 const BEST_KEY = "parapet.best";
 
@@ -27,7 +28,11 @@ export class Game {
   readonly rig: CameraRig;
   readonly hud: Hud;
   readonly lighting: Lighting;
+  readonly sky: Sky;
   readonly course: CourseData;
+  readonly post: Post;
+  private elapsed = 0;
+  private lowFpsTime = 0;
   private readonly loop: Loop;
 
   private time = 0;
@@ -45,9 +50,9 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.0;
 
-    createSky(this.renderer, this.scene);
+    this.sky = new Sky(this.renderer, this.scene);
     this.lighting = new Lighting(this.scene);
 
     const mats = createMaterials();
@@ -58,6 +63,7 @@ export class Game {
     this.input = new Input(canvas);
     this.player = new PlayerController(this.world);
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
+    this.post = new Post(this.renderer, this.scene, this.rig.camera);
     this.hud = new Hud(hudRoot);
     this.hud.setBest(this.loadBest());
 
@@ -167,12 +173,21 @@ export class Game {
     this.rig.look(this.input, this.player);
     this.rig.update(dt, alpha, this.player, this.input);
     this.lighting.follow(this.rig.camera.position);
+    this.elapsed += dt;
+    this.sky.update(this.elapsed, this.rig.camera.position);
     this.hud.update(dt);
     this.hud.setTimer(this.time, this.timerRunning);
 
-    this.renderer.render(this.scene, this.rig.camera);
+    const blur = this.player.grounded || this.player.state === "air" ? Math.max(0, (this.player.speed - 6) / 4) : 0;
+    if (location.search.includes("direct")) this.renderer.render(this.scene, this.rig.camera);
+    else this.post.render(Math.min(1, blur) * this.player.sprintBlend, this.elapsed);
 
     this.fps = this.fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
+    // Auto quality: sustained < 50 fps drops AO.
+    if (this.post.getQuality() === "high") {
+      this.lowFpsTime = this.fps < 50 ? this.lowFpsTime + dt : 0;
+      if (this.lowFpsTime > 3) this.post.setQuality("low");
+    }
     if (this.debugOn) {
       const p = this.player.pos;
       const v = this.player.vel;
@@ -184,7 +199,7 @@ export class Game {
           `speed  ${this.player.speed.toFixed(2)}  vy ${v.y.toFixed(2)}\n` +
           `ground ${this.player.grounded ? this.player.groundSurface : "-"} ${this.player.groundTag ?? ""}\n` +
           `cp     ${this.checkpoint} ${this.course.checkpoints[this.checkpoint]?.name ?? ""}\n` +
-          `draws  ${info.render.calls}  tris ${(info.render.triangles / 1000).toFixed(1)}k\n` +
+          `draws  ${info.render.calls}  tris ${(info.render.triangles / 1000).toFixed(1)}k  post ${this.post.getQuality()}\n` +
           `boxes  ${this.world.count}`,
       );
     }
@@ -193,6 +208,7 @@ export class Game {
   private resize(): void {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.rig.resize(window.innerWidth / window.innerHeight);
+    this.post.resize();
   }
 
   // ---------------------------------------------------------------- harness hooks
@@ -207,6 +223,10 @@ export class Game {
 
   key(code: string, down: boolean): void {
     this.input.inject(code, down);
+  }
+
+  setQuality(q: "high" | "low"): void {
+    this.post.setQuality(q);
   }
 
   stats(): Record<string, unknown> {

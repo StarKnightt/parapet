@@ -11,6 +11,8 @@
     "shoot": "node tools/shoot.mjs"
   },
   "dependencies": {
+    "n8ao": "^2.0.1",
+    "postprocessing": "^6.39.5",
     "three": "^0.185.1"
   },
   "devDependencies": {

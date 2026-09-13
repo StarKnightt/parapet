@@ -100,6 +100,14 @@ export class Kit {
       colors[i * 3 + 2] = this.color.b;
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    // Per-vertex (height fraction within this box, box height) for the dirt/drip shader.
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const box = new Float32Array(24 * 2);
+    for (let i = 0; i < 24; i++) {
+      box[i * 2] = (pos.getY(i) - min[1]) / h;
+      box[i * 2 + 1] = h;
+    }
+    geo.setAttribute("aBox", new THREE.BufferAttribute(box, 2));
 
     const key = `${mat}:${opts.shadow === false ? "far" : "near"}`;
     let bucket = this.buckets.get(key);
