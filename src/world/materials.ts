@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { createRng } from "../core/math";
 import { patchMaterial } from "./shaderPatches";
 
-export type MaterialKey = "concrete" | "glass" | "metal" | "paint" | "dark";
+export type MaterialKey = "concrete" | "glass" | "metal" | "paint" | "dark" | "lamp";
 
 export interface MaterialSet {
   concrete: THREE.MeshStandardMaterial;
@@ -16,6 +16,8 @@ export interface MaterialSet {
   metal: THREE.MeshStandardMaterial;
   paint: THREE.MeshStandardMaterial;
   dark: THREE.MeshStandardMaterial;
+  /** Warm emissive: the tungsten glow inside doorways and recesses. */
+  lamp: THREE.MeshStandardMaterial;
   /** World metres covered by one concrete texture repeat. */
   concreteTile: number;
 }
@@ -50,10 +52,10 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   const img = ctx.createImageData(size, size);
   const d = img.data;
   for (let i = 0; i < size * size; i++) {
-    const g = 162 + (rng() - 0.5) * 34 + (rng() - 0.5) * 12;
-    d[i * 4] = g + 6;
-    d[i * 4 + 1] = g + 3;
-    d[i * 4 + 2] = g - 6;
+    const g = 164 + (rng() - 0.5) * 18 + (rng() - 0.5) * 8;
+    d[i * 4] = g + 3;
+    d[i * 4 + 1] = g + 2;
+    d[i * 4 + 2] = g - 2;
     d[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
@@ -92,9 +94,9 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   }
 
   // Large tonal blotches (formwork pours, damp patches).
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < 26; i++) {
     const v = rng() < 0.5 ? 0 : 255;
-    blotch(ctx, size, rng() * size, rng() * size, 80 + rng() * 160, `rgba(${v},${v},${v},${0.025 + rng() * 0.04})`);
+    blotch(ctx, size, rng() * size, rng() * size, 90 + rng() * 180, `rgba(${v},${v},${v},${0.04 + rng() * 0.07})`);
   }
   // Small dark pits / aggregate.
   for (let i = 0; i < 900; i++) {
@@ -189,5 +191,15 @@ export function createMaterials(): MaterialSet {
   });
   patchMaterial(dark);
 
-  return { concrete, glass, metal, paint, dark, concreteTile: 3 };
+  const lamp = new THREE.MeshStandardMaterial({
+    color: 0x2a1c0c,
+    emissive: 0xffb347,
+    emissiveIntensity: 3.2,
+    roughness: 1,
+    metalness: 0,
+    vertexColors: true,
+  });
+  patchMaterial(lamp);
+
+  return { concrete, glass, metal, paint, dark, lamp, concreteTile: 3 };
 }

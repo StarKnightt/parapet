@@ -80,7 +80,8 @@ export class PlayerController {
   private wallDir = 1;
   private wallTime = 0;
   private wallCool = 0;
-  private lastWallId = -1;
+  private lastWallFace: { axis: 0 | 2; dir: number; coord: number } | null = null;
+  private wallChain = 0;
   /** Wall-runs need a deliberate jump; walking off a ledge beside a wall does not attach. */
   private jumpedSinceGround = false;
   private readonly probe: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
@@ -113,9 +114,11 @@ export class PlayerController {
     this.crouched = false;
     this.sliding = false;
     this.height = PLAYER.height;
-    this.wall = null;
-    this.lastWallId = -1;
+    this.detachWall();
+    this.lastWallFace = null;
+    this.wallChain = 0;
     this.wallCool = 0;
+    this.jumpedSinceGround = false;
   }
 
   fixedUpdate(dt: number, input: Input): void {
@@ -153,7 +156,8 @@ export class PlayerController {
       this.slideCool = PLAYER.slideCooldown;
       this.events.onSlideEnd?.();
     }
-    if (this.crouched && !this.sliding && !wantSlide) this.tryStand();
+    // Holding Ctrl in the air means "slide on landing", not "stay small".
+    if (this.crouched && !this.sliding && (!wantSlide || !this.grounded)) this.tryStand();
 
     const targetSpeed = this.crouched ? PLAYER.crouchSpeed : sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
 
@@ -207,7 +211,8 @@ export class PlayerController {
     // --- wall-run -----------------------------------------------------------------
     this.wallCool = Math.max(0, this.wallCool - dt);
     if (this.grounded) {
-      this.lastWallId = -1;
+      this.lastWallFace = null;
+      this.wallChain = 0;
       this.jumpedSinceGround = false;
     }
     if (
@@ -256,6 +261,7 @@ export class PlayerController {
         this.slideCool = PLAYER.slideCooldown;
         this.events.onSlideEnd?.();
       }
+      if (this.crouched) this.tryStand();
       this.events.onJump?.();
     }
 
@@ -307,7 +313,7 @@ export class PlayerController {
     this.readBox();
 
     // Standing up while airborne if the slide ended mid-air and there is room.
-    if (this.crouched && !this.sliding && !wantSlide) this.tryStand();
+    if (this.crouched && !this.sliding && (!wantSlide || !this.grounded)) this.tryStand();
 
     this.state = this.grounded ? (this.sliding ? "slide" : "ground") : this.wall ? "wallrun" : "air";
 
@@ -336,16 +342,20 @@ export class PlayerController {
     const remaining = delta - moved;
 
     const feetY = this.box.min[1];
-    const ledge = hit.max[1] - feetY;
+    const top = this.obstacleTop(axis, Math.sign(delta), hit);
+    const ledge = top - feetY;
 
     // Mantle: chest-high (or, mid-jump, anything within reach) while pushing into the face.
     if (ledge > PLAYER.stepHeight && ledge <= PLAYER.mantleMaxHeight && !this.sliding && !this.crouched) {
       const wishAlong = axis === 0 ? this.wish.x : this.wish.y;
-      if (wishAlong * Math.sign(delta) > 0.4 && this.tryMantle(axis, Math.sign(delta), hit, ledge)) return;
+      if (wishAlong * Math.sign(delta) > 0.4 && this.tryMantle(axis, Math.sign(delta), hit, top)) return;
     }
 
+    // Rising past a kerb-height lip (jumped just before the edge): hold speed, we clear it next tick.
+    if (ledge > 0 && ledge <= PLAYER.stepHeight && !this.grounded && this.vel.y > 0.5) return;
+
     // Step-up: only when the blocker's top is within reach and we are on or near the ground.
-    if (ledge > 0 && ledge <= PLAYER.stepHeight && (this.grounded || this.vel.y <= 0.5)) {
+    if (ledge > 0 && ledge <= PLAYER.stepHeight) {
       this.copyBox(this.box, this.saved);
       const up = this.world.moveAxis(this.box, 1, ledge + 0.01);
       if (!up) {
@@ -366,16 +376,52 @@ export class PlayerController {
     else this.vel.z = 0;
   }
 
-  /** Try to start a mantle onto `hit` approached along `axis` in direction `dir`. */
-  private tryMantle(axis: 0 | 2, dir: number, hit: Collider, ledge: number): boolean {
+  /**
+   * Top of the obstruction we just hit, following stacked colliders that share the face
+   * (building mass + roof slab, parapet + paint layer) so a 6 cm veneer never hides a ledge.
+   * Only the chain that starts at `hit` counts: a pipe 1.2 m above a kerb is not part of it.
+   */
+  private obstacleTop(axis: 0 | 2, dir: number, hit: Collider): number {
+    this.copyBox(this.box, this.probe);
+    const face = dir > 0 ? this.box.max[axis] : this.box.min[axis];
+    this.probe.min[axis] = dir > 0 ? face : face - 0.05;
+    this.probe.max[axis] = dir > 0 ? face + 0.05 : face;
+    this.probe.min[1] = this.box.min[1] - 0.01;
+    this.probe.max[1] = this.box.min[1] + PLAYER.mantleMaxHeight + 0.5;
+    this.hits.length = 0;
+    this.world.query(this.probe, this.hits);
+    let top = hit.max[1];
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const c of this.hits) {
+        if (c.min[1] <= top + 0.03 && c.max[1] > top) {
+          top = c.max[1];
+          grew = true;
+        }
+      }
+    }
+    return top;
+  }
+
+  /** Try to start a mantle onto the obstruction whose top is at `top`, approached along `axis`. */
+  private tryMantle(axis: 0 | 2, dir: number, hit: Collider, top: number): boolean {
     const w = PLAYER.radius * 2;
+    const ledge = top - this.box.min[1];
     this.copyBox(this.box, this.saved);
     // Target: standing on the ledge, inset just past its face, at full height.
     this.saved.min[axis] = dir > 0 ? hit.min[axis] + PLAYER.mantleInset : hit.max[axis] - PLAYER.mantleInset - w;
     this.saved.max[axis] = this.saved.min[axis] + w;
-    this.saved.min[1] = hit.max[1] + 0.02;
+    this.saved.min[1] = top + 0.02;
     this.saved.max[1] = this.saved.min[1] + PLAYER.height;
     if (this.world.overlapsAny(this.saved)) return false;
+
+    // Is there floor past the lip? On a thin parapet with a drop behind it we still climb,
+    // but stop on top instead of being flung over the edge.
+    this.copyBox(this.saved, this.probe);
+    this.probe.min[axis] += dir * PLAYER.mantleFloorReach;
+    this.probe.max[axis] += dir * PLAYER.mantleFloorReach;
+    const floorBeyond = this.world.overlapsAny(this.probe) !== null || this.world.probeDown(this.probe, PLAYER.mantleFloorDrop) !== null;
 
     const r = PLAYER.radius;
     this.readBox();
@@ -386,11 +432,12 @@ export class PlayerController {
     this.mT = 0;
 
     // Keep some approach speed, redirected over the ledge.
-    const approach = clamp(this.speed * PLAYER.mantleKeep, 3, 7);
+    const approach = floorBeyond ? clamp(this.speed * PLAYER.mantleKeep, 3, 7) : 0;
     this.mExit.set(0, 0);
     if (axis === 0) this.mExit.x = dir * approach;
     else this.mExit.y = dir * approach;
 
+    this.detachWall();
     this.vel.set(0, 0, 0);
     this.grounded = false;
     this.coyote = 0;
@@ -442,8 +489,11 @@ export class PlayerController {
         this.world.query(this.probe, this.hits);
         let best: Collider | null = null;
         for (const c of this.hits) {
-          if (c.id === this.lastWallId) continue;
           if (c.max[1] < this.box.min[1] + this.height * 0.9) continue; // must reach above the head-ish
+          // Never re-attach to the face plane we just left (segmented facades share one plane).
+          const cFace = dir > 0 ? c.min[axis] : c.max[axis];
+          const lf = this.lastWallFace;
+          if (lf && lf.axis === axis && lf.dir === dir && Math.abs(lf.coord - cFace) < 0.05) continue;
           if (!best || c.max[1] > best.max[1]) best = c;
         }
         if (!best) continue;
@@ -452,13 +502,14 @@ export class PlayerController {
         this.wallAxis = axis;
         this.wallDir = dir;
         this.wallTime = 0;
-        this.lastWallId = best.id;
         // Snap flush to the face and kick upward a little.
         const face = dir > 0 ? best.min[axis] : best.max[axis];
+        this.lastWallFace = { axis, dir, coord: face };
         const r = PLAYER.radius;
         if (axis === 0) this.pos.x = face - dir * (r + 0.005);
         else this.pos.z = face - dir * (r + 0.005);
-        this.vel.y = Math.max(this.vel.y * 0.4, 0) + PLAYER.wallKick;
+        this.vel.y = Math.max(this.vel.y * PLAYER.wallKeepUp, PLAYER.wallKick);
+        this.jumpBuffer = 0; // a press buffered before contact must not fire a same-tick wall-jump
         // Side relative to facing: wall on the right if its direction matches `right`.
         const rightAlong = axis === 0 ? this.right.x : this.right.y;
         this.events.onWallRunStart?.(rightAlong * dir > 0 ? 1 : -1);
@@ -505,7 +556,9 @@ export class PlayerController {
       this.vel.x *= PLAYER.wallJumpKeep;
     }
     this.hvel.set(this.vel.x, this.vel.z);
-    this.vel.y = JUMP_SPEED * PLAYER.wallJumpUp;
+    // Each successive wall-jump in one airtime lifts less, so parallel walls are not a ladder.
+    this.vel.y = JUMP_SPEED * PLAYER.wallJumpUp * Math.pow(PLAYER.wallChainDecay, this.wallChain);
+    this.wallChain++;
     this.jumpBuffer = 0;
     this.coyote = 0;
     this.jumpedSinceGround = true;

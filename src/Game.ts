@@ -3,6 +3,7 @@
  * checkpoints, respawn, finish, best time.
  */
 import * as THREE from "three";
+import { GameAudio } from "./audio/Audio";
 import { Input } from "./core/Input";
 import { Loop } from "./core/Loop";
 import { CameraRig } from "./player/CameraRig";
@@ -31,6 +32,7 @@ export class Game {
   readonly sky: Sky;
   readonly course: CourseData;
   readonly post: Post;
+  readonly audio = new GameAudio();
   private elapsed = 0;
   private lowFpsTime = 0;
   private readonly loop: Loop;
@@ -50,7 +52,7 @@ export class Game {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.9;
+    this.renderer.toneMappingExposure = 1.0;
 
     this.sky = new Sky(this.renderer, this.scene);
     this.lighting = new Lighting(this.scene);
@@ -68,21 +70,34 @@ export class Game {
     this.hud.setBest(this.loadBest());
 
     this.player.events = {
-      onLand: (impact) => this.rig.land(impact),
+      onLand: (impact, surface) => {
+        this.rig.land(impact);
+        this.audio.land(impact, surface);
+      },
       onStepUp: (dy) => this.rig.stepUp(dy),
-      onJump: () => {},
-      onFootstep: () => {},
-      onMantle: () => this.rig.punchFov(3),
-      onSlideStart: () => this.rig.punchFov(4),
+      onJump: () => this.audio.jump(),
+      onFootstep: (surface, speed) => this.audio.footstep(surface, speed),
+      onMantle: (height) => {
+        this.rig.punchFov(3);
+        this.audio.mantle(height);
+      },
+      onSlideStart: () => {
+        this.rig.punchFov(4);
+        this.audio.slideStart();
+      },
       // Lean away from the wall while running it.
       onWallRunStart: (side) => (this.rig.extraRoll = -side * 8 * (Math.PI / 180)),
       onWallRunEnd: () => (this.rig.extraRoll = 0),
-      onWallJump: () => this.rig.punchFov(4),
+      onWallJump: () => {
+        this.rig.punchFov(4);
+        this.audio.wallJump();
+      },
     };
     this.input.onLockChange = (locked) => {
       this.hud.setLocked(locked);
       if (locked) this.hud.fadeHint();
     };
+    this.input.onGesture = () => this.audio.start();
 
     this.restart();
     window.addEventListener("resize", () => this.resize());
@@ -98,6 +113,7 @@ export class Game {
   restart(): void {
     const s = this.course.spawn;
     this.player.teleport(s.pos[0], s.pos[1] + 0.05, s.pos[2], s.yaw);
+    this.rig.reset();
     this.checkpoint = 0;
     this.time = 0;
     this.timerRunning = false;
@@ -109,6 +125,7 @@ export class Game {
   private respawn(): void {
     const cp = this.course.checkpoints[this.checkpoint] ?? { spawn: this.course.spawn.pos, yaw: this.course.spawn.yaw };
     this.player.teleport(cp.spawn[0], cp.spawn[1] + 0.05, cp.spawn[2], cp.yaw);
+    this.rig.reset();
     this.rig.punchFov(-6);
   }
 
@@ -124,6 +141,7 @@ export class Game {
   private finish(): void {
     this.finished = true;
     this.timerRunning = false;
+    this.audio.finish();
     const best = this.loadBest();
     if (best === null || this.time < best) {
       localStorage.setItem(BEST_KEY, String(this.time));
@@ -139,6 +157,10 @@ export class Game {
   private fixedUpdate(dt: number): void {
     if (this.input.consume("restart")) this.restart();
     if (this.input.consume("debug")) this.debugOn = this.hud.toggleDebug();
+    if (this.input.consume("mute")) {
+      this.audio.setMuted(!this.audio.isMuted);
+      this.hud.showToast(this.audio.isMuted ? "muted" : "sound on");
+    }
     const tp = this.input.drainTeleport();
     if (tp !== null && tp > 0 && this.course.teleports[tp - 1]) {
       const t = this.course.teleports[tp - 1];
@@ -156,6 +178,7 @@ export class Game {
       if (this.inside(this.course.checkpoints[i].trigger, p)) {
         this.checkpoint = i;
         this.hud.showToast(this.course.checkpoints[i].name);
+        this.audio.checkpoint();
         break;
       }
     }
@@ -183,6 +206,7 @@ export class Game {
     this.sky.update(this.elapsed, this.rig.camera.position);
     this.hud.update(dt);
     this.hud.setTimer(this.time, this.timerRunning);
+    this.audio.update(dt, this.player.speed, this.player.grounded ? 1 : 0, this.player.sliding && this.player.grounded, this.player.state === "wallrun");
 
     const blur = this.player.grounded || this.player.state === "air" ? Math.max(0, (this.player.speed - 6) / 4) : 0;
     if (location.search.includes("direct")) this.renderer.render(this.scene, this.rig.camera);
@@ -254,6 +278,7 @@ export class Game {
       checkpoint: this.checkpoint,
       time: this.time,
       finished: this.finished,
+      audio: this.audio.state,
     };
   }
 }

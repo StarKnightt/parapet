@@ -18,6 +18,7 @@ export function launchOptions() {
       "--force_high_performance_gpu",
       "--hide-scrollbars",
       "--mute-audio",
+      "--autoplay-policy=no-user-gesture-required",
     ],
   };
 }

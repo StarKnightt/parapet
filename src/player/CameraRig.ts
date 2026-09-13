@@ -46,7 +46,18 @@ export class CameraRig {
   }
 
   punchFov(deg: number): void {
-    this.fovPunch = Math.min(12, this.fovPunch + deg);
+    this.fovPunch = Math.max(-12, Math.min(12, this.fovPunch + deg));
+  }
+
+  /** Teleport/respawn: drop every transient so no roll, dip or step offset survives. */
+  reset(): void {
+    this.dipY = 0;
+    this.dipV = 0;
+    this.stepOffset = 0;
+    this.roll = 0;
+    this.extraRoll = 0;
+    this.bobAmount = 0;
+    this.eyeH = PLAYER.eyeHeight;
   }
 
   stepUp(dy: number): void {
@@ -71,7 +82,7 @@ export class CameraRig {
     this.stepOffset = damp(this.stepOffset, 0, 0.07, dt);
 
     const speed = player.speed;
-    const moving = player.grounded && speed > 0.8;
+    const moving = player.grounded && speed > 0.8 && !player.sliding;
     this.bobAmount = damp(this.bobAmount, moving ? 1 : 0, moving ? 0.12 : 0.2, dt);
     const amp = BOB_AMP_WALK + (BOB_AMP_SPRINT - BOB_AMP_WALK) * player.sprintBlend;
     const phase = player.stride * Math.PI * 2;
@@ -96,11 +107,12 @@ export class CameraRig {
       this.tmp.z + rz * bobX,
     );
 
-    this.euler.set(player.pitch, player.yaw, this.roll);
+    // Landing dip also nods the view down a touch, so the spring reads in the horizon line.
+    this.euler.set(player.pitch + this.dipY * 0.45, player.yaw, this.roll);
     this.camera.quaternion.setFromEuler(this.euler);
 
     this.fovPunch *= Math.exp(-dt / 0.18);
-    if (this.fovPunch < 0.01) this.fovPunch = 0;
+    if (Math.abs(this.fovPunch) < 0.01) this.fovPunch = 0;
     const fov = BASE_FOV + SPRINT_FOV_ADD * player.sprintBlend + this.fovPunch;
     if (Math.abs(fov - this.camera.fov) > 0.01) {
       this.camera.fov = fov;

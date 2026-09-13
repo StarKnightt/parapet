@@ -7,7 +7,7 @@
  * are drained once per render frame by the camera rig (look is not tied to the fixed step).
  */
 
-export type Action = "jump" | "slide" | "restart" | "debug";
+export type Action = "jump" | "slide" | "restart" | "debug" | "mute";
 
 const KEY_TO_ACTION: Record<string, Action> = {
   Space: "jump",
@@ -15,6 +15,7 @@ const KEY_TO_ACTION: Record<string, Action> = {
   ControlRight: "slide",
   KeyC: "slide",
   KeyR: "restart",
+  KeyM: "mute",
   F3: "debug",
 };
 
@@ -28,11 +29,15 @@ export class Input {
   private teleportKey: number | null = null;
 
   onLockChange?: (locked: boolean) => void;
+  /** First click or key: the audio context may start now. */
+  onGesture?: () => void;
 
   constructor(element: HTMLElement) {
     element.addEventListener("click", () => {
+      this.onGesture?.();
       if (!this.locked) element.requestPointerLock();
     });
+    document.addEventListener("keydown", () => this.onGesture?.(), { capture: true });
     document.addEventListener("pointerlockchange", () => {
       this.locked = document.pointerLockElement === element;
       if (!this.locked) this.keys.clear();

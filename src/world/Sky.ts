@@ -9,10 +9,10 @@ import * as THREE from "three";
 export const SUN_DIR = new THREE.Vector3(0.45, 0.5, -0.66).normalize();
 
 export const SKY = {
-  zenith: new THREE.Color(0x8e9194),
-  horizon: new THREE.Color(0xd9d5cd),
-  cloudDark: new THREE.Color(0x8b8f93),
-  cloudLight: new THREE.Color(0xd8d8d4),
+  zenith: new THREE.Color(0x868a8e),
+  horizon: new THREE.Color(0xcccbc6),
+  cloudDark: new THREE.Color(0x83878b),
+  cloudLight: new THREE.Color(0xc9cac6),
   sun: new THREE.Color(0xf2e2c8),
 };
 

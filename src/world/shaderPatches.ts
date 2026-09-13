@@ -14,9 +14,9 @@ export const FOG_UNIFORMS = {
   uFogDensity: { value: 0.2 },
   uFogFalloff: { value: 0.22 },
   uFogBase: { value: 0.0 },
-  uFogDist: { value: 0.0011 },
-  uFogColor: { value: new THREE.Color(0xe9e7e1) },
-  uFogColorUp: { value: new THREE.Color(0xc9cbcb) },
+  uFogDist: { value: 0.0008 },
+  uFogColor: { value: new THREE.Color(0xd6d5d0) },
+  uFogColorUp: { value: new THREE.Color(0xb9bcbd) },
 };
 
 const VARYINGS_VERT = /* glsl */ `
@@ -70,8 +70,8 @@ const CONCRETE_DETAIL = /* glsl */ `
     // Low-frequency world tint: olive-grey ↔ warm tan, breaks up identical faces.
     float t1 = sin(p.x * 0.11 + p.y * 0.07) * sin(p.z * 0.09 - p.y * 0.05) * 0.5 + 0.5;
     float t2 = sin(p.x * 0.031 + 1.7) * sin(p.z * 0.027 + p.y * 0.02) * 0.5 + 0.5;
-    vec3 olive = vec3(0.70, 0.71, 0.56);
-    vec3 tan_ = vec3(0.98, 0.88, 0.70);
+    vec3 olive = vec3(0.78, 0.79, 0.70);
+    vec3 tan_ = vec3(0.97, 0.93, 0.85);
     vec3 tint = mix(olive, tan_, t1 * 0.6 + t2 * 0.4);
     // Mid-frequency patches (pour differences / damp) for tonal contrast.
     float pour = sin(p.x * 0.53 + p.y * 0.71 + 3.1) * sin(p.z * 0.47 - p.y * 0.38) * sin((p.x + p.z) * 0.29);
@@ -119,8 +119,8 @@ const CONCRETE_DETAIL = /* glsl */ `
     float horiz = smoothstep(0.6, 1.0, n.y);
     float stain = sin(p.x * 0.43 + 2.0) * sin(p.z * 0.37) * 0.5 + 0.5;
     float puddle = smoothstep(0.55, 0.9, sin(p.x * 0.21 + 1.0) * sin(p.z * 0.17 + 0.4));
-    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.74, 0.76, 0.64), horiz * (0.25 + 0.35 * stain));
-    diffuseColor.rgb *= 1.0 - horiz * puddle * 0.22;
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.78, 0.80, 0.68), horiz * (0.15 + 0.3 * stain));
+    diffuseColor.rgb *= 1.0 - horiz * puddle * 0.16;
   }
 `;
 

@@ -282,32 +282,112 @@ const walkBy = await stats();
 await releaseAll();
 report("no wall-run on ground", walkBy.state, "ground", walkBy.state === "ground" && Math.abs(walkBy.pos[1] - 20) < 0.01);
 
-// ---- 8. course A → B ------------------------------------------------------------------
-await pose(3, 20, 5.3, -90);
+// ---- 8. course A → B: vault the vent, slide under the rack, sprint the 6.5 m gap -------
+await pose(3, 20, 0, -90);
 await sleep(300);
 await key("KeyW", true);
 await key("ShiftLeft", true);
-let j1 = false;
+let slideOn = false;
+let slideOff = false;
 let j2 = false;
-let minY = 99;
-const route = await sample(6000, async (s) => {
-  minY = Math.min(minY, s.pos[1]);
-  if (!j1 && s.pos[0] > 9.9) {
-    j1 = true;
-    await key("Space", true);
-    setTimeout(() => key("Space", false), 60);
+let takeoffSpeed = 0;
+const route = await sample(7000, async (s) => {
+  if (!slideOn && s.pos[0] > 16) {
+    slideOn = true;
+    await key("ControlLeft", true);
   }
-  if (!j2 && s.pos[0] > 26.6) {
+  if (slideOn && !slideOff && s.pos[0] > 22) {
+    slideOff = true;
+    await key("ControlLeft", false);
+  }
+  if (!j2 && s.pos[0] > 27.5) {
     j2 = true;
+    takeoffSpeed = s.speed;
     await key("Space", true);
     setTimeout(() => key("Space", false), 60);
   }
-  if (s.pos[0] > 40) return "stop";
+  if (j2 && s.grounded && s.pos[0] > 30) return "stop";
+  if (s.pos[1] < 17) return "stop";
 });
 await releaseAll();
 const end = route[route.length - 1];
-const onB = end.pos[0] > 32.5 && Math.abs(end.pos[1] - 18.5) < 0.1 && end.grounded;
-report("A→B: vault vent, lane, gap", `x=${end.pos[0].toFixed(1)} y=${end.pos[1].toFixed(2)} minY=${minY.toFixed(1)}`, "on roof B (y=18.5)", onB);
+const states = new Set(route.map((s) => s.state));
+const onB = end.pos[0] > 34.5 && end.pos[1] > 18.45 && end.pos[1] < 18.95 && end.grounded;
+report("A→B: vault, slide, gap", `x=${end.pos[0].toFixed(1)} y=${end.pos[1].toFixed(2)} v0=${takeoffSpeed.toFixed(1)} states=${[...states].join(",")}`, "on roof B, mantle+slide seen, v0>7.5", onB && states.has("mantle") && states.has("slide") && takeoffSpeed > 7.5);
+
+// ---- 9. penthouse mantle from B (stacked mass + slab colliders) -----------------------
+await pose(40, 18.5, 5, -90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+let pj = false;
+const pent = await sample(2500, async (s) => {
+  if (!pj && s.pos[0] > 42.6) {
+    pj = true;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  }
+  if (pj && s.grounded && s.pos[1] > 20.5 && s.pos[0] > 44.5) return "stop";
+});
+await releaseAll();
+const pEnd = pent[pent.length - 1];
+report("penthouse mantle 2.1 m", `x=${pEnd.pos[0].toFixed(1)} y=${pEnd.pos[1].toFixed(2)} mantle=${pent.some((s) => s.state === "mantle")}`, "y=20.6 on top", pEnd.grounded && Math.abs(pEnd.pos[1] - 20.6) < 0.05 && pEnd.pos[0] > 44.5);
+
+// ---- 10. C → D: wall-run the facade over the 9 m gap ----------------------------------
+await pose(78, 15.5, -8.2, -90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+let cj = false;
+let cjT = 0;
+const cd = await sample(4000, async (s) => {
+  if (!cj && s.pos[0] > 89.0) {
+    cj = true;
+    cjT = s.t;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  }
+  if (cj && s.grounded && s.t > cjT + 0.4) return "stop";
+  if (s.pos[1] < 12) return "stop";
+});
+await releaseAll();
+const cdEnd = cd[cd.length - 1];
+const cdWall = cd.filter((s) => s.state === "wallrun");
+const cdWallTime = cdWall.length ? cdWall[cdWall.length - 1].t - cdWall[0].t : 0;
+report("C→D wall-run crossing", `x=${cdEnd.pos[0].toFixed(1)} y=${cdEnd.pos[1].toFixed(2)} wall=${cdWallTime.toFixed(2)}s`, "lands on D (x>98.5, y≈15 or lip 15.35), wall>0.6 s", cdEnd.grounded && cdEnd.pos[0] > 98.5 && cdEnd.pos[1] > 14.95 && cdEnd.pos[1] < 15.4 && cdWallTime > 0.6);
+
+// ---- 11. C → D without the wall: sprint-jump alone must NOT make it -------------------
+await pose(78, 15.5, 4.2 - 3, -90); // lane south of the beam, away from the facade
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+let nj = false;
+let njT = 0;
+const nd = await sample(3500, async (s) => {
+  if (!nj && s.pos[0] > 89.2) {
+    nj = true;
+    njT = s.t;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  }
+  if (nj && s.grounded && s.t > njT + 0.4) return "stop";
+  if (s.pos[1] < 13) return "stop";
+});
+await releaseAll();
+const ndEnd = nd[nd.length - 1];
+report("C→D needs the wall", `x=${ndEnd.pos[0].toFixed(1)} y=${ndEnd.pos[1].toFixed(2)}`, "falls short (y<13)", ndEnd.pos[1] < 13);
+
+// ---- 12. fall → respawn at the last checkpoint ----------------------------------------
+await pose(3, 20, 0, -90); // touch the Start checkpoint first
+await sleep(200);
+await pose(30, 20, 0, -90);
+await sleep(200);
+await key("KeyW", true);
+const fall = await sample(4000, (s) => (s.pos[1] < 17 ? "stop" : undefined));
+await releaseAll();
+await sleep(2500);
+const back = await stats();
+report("fall → respawn", `x=${back.pos[0].toFixed(1)} y=${back.pos[1].toFixed(2)} ${back.state} fell=${fall.some((s) => s.pos[1] < 17)}`, "back on a roof, grounded", back.grounded && back.pos[1] > 12 && back.speed < 0.1);
 
 await browser.close();
 if (errors.length) {

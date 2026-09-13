@@ -46,6 +46,10 @@ export const PLAYER = {
   mantleDurationMax: 0.46,
   /** Forward speed kept after a mantle, as a fraction of approach speed; clamped to [3, 7]. */
   mantleKeep: 0.8,
+  /** How far past the lip we look for floor before keeping speed through a mantle. */
+  mantleFloorReach: 0.6,
+  /** Floor within this drop below the lip counts as "safe to run on". */
+  mantleFloorDrop: 1.3,
 
   // --- slide ------------------------------------------------------------------------
   crouchHeight: 0.95,
@@ -75,13 +79,17 @@ export const PLAYER = {
   /** Gravity multiplier at attach, ramping to 1 by `wallGravityRamp` seconds. */
   wallGravityStart: 0.22,
   wallGravityRamp: 0.9,
-  wallMaxTime: 1.15,
+  wallMaxTime: 1.6,
   /** Speed lost along the wall per second (m/s²). */
-  wallDrag: 1.4,
+  wallDrag: 1.0,
+  /** Fraction of upward velocity kept on attach (a fresh jump keeps most of its rise). */
+  wallKeepUp: 0.85,
   /** Wall-jump: push away from the wall, and vertical as a fraction of a normal jump. */
   wallJumpPush: 5.2,
   wallJumpUp: 1.0,
   wallJumpKeep: 0.92,
+  /** Vertical impulse multiplier per successive wall-jump in one airtime. */
+  wallChainDecay: 0.72,
   /** After leaving a wall you cannot re-attach to the same one until grounded. */
   wallCooldown: 0.12,
 

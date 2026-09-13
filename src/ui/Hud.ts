@@ -36,7 +36,8 @@ export class Hud {
       `<div><kbd>Shift</kbd>sprint</div>` +
       `<div><kbd>Space</kbd>jump</div>` +
       `<div><kbd>Ctrl</kbd>slide</div>` +
-      `<div><kbd>R</kbd>restart</div>`;
+      `<div><kbd>R</kbd>restart</div>` +
+      `<div><kbd>M</kbd>mute</div>`;
     root.appendChild(this.hint);
 
     this.toast = document.createElement("div");
