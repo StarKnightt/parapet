@@ -35,7 +35,7 @@ const pose = (x, y, z, yaw, pitch = 0) => page.evaluate((p) => window.__parapet.
 const look = (yaw, pitch = 0) => page.evaluate((p) => window.__parapet.look(...p), [yaw, pitch]);
 const stats = () => page.evaluate(() => window.__parapet.stats());
 const releaseAll = async () => {
-  for (const k of ["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "Space", "ControlLeft"]) await key(k, false);
+  for (const k of ["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ControlLeft"]) await key(k, false);
 };
 const sleep = (ms) => page.waitForTimeout(ms);
 
@@ -72,16 +72,6 @@ const topSpeed = Math.max(...run.map((s) => s.speed));
 const t85 = run.find((s) => s.speed > 8.4)?.t ?? null;
 report("run top speed m/s (W)", topSpeed.toFixed(2), "8.5", Math.abs(topSpeed - 8.5) < 0.1);
 report("time to 8.4 m/s", t85 === null ? "never" : t85.toFixed(2) + "s", "< 0.3s", t85 !== null && t85 < 0.3);
-
-// ---- 1a. walk speed (Shift held slows to walking pace) --------------------------------
-await pose(-3, 20, LANE, 90);
-await sleep(300);
-await key("KeyW", true);
-await key("ShiftLeft", true);
-const walk = await sample(1200);
-await releaseAll();
-const walkTop = Math.max(...walk.map((s) => s.speed));
-report("walk speed m/s (W+Shift)", walkTop.toFixed(2), "5.5", Math.abs(walkTop - 5.5) < 0.1);
 
 // ---- 1b. strafe direction (yaw 0 looks -z, D must move +x) --------------------------
 await pose(-3, 20, LANE + 4, 0);
@@ -150,16 +140,15 @@ const wallMantled = wall.some((s) => s.state === "mantle");
 report("0.6 m block mantles", `${wallY.toFixed(2)} mantle=${wallMantled}`, "0.60 via mantle", Math.abs(wallY - 0.6) < 0.03 && wallMantled);
 
 // ---- 5. mantle (M2) ---------------------------------------------------------------------
-// 1.25 m block at i=5 → z 3..5. Walk (Shift) into it: should end on top (y = 21.25).
+// 1.25 m block at i=5 → z 3..5. Run into it (there is no walk pace): should end on top (y = 21.25).
 await pose(-4, 20, 4, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 const m1 = await sample(1500, (s) => (s.grounded && s.pos[1] > 21.2 ? "stop" : undefined));
 await releaseAll();
 const m1End = m1[m1.length - 1];
 const m1States = new Set(m1.map((s) => s.state));
-report("mantle 1.25 m (walk)", `y=${m1End.pos[1].toFixed(2)} x=${m1End.pos[0].toFixed(1)} states=${[...m1States].join(",")}`, "y=21.25, x<-7, mantle seen", Math.abs(m1End.pos[1] - 21.25) < 0.03 && m1End.pos[0] < -7 && m1States.has("mantle"));
+report("mantle 1.25 m (run)", `y=${m1End.pos[1].toFixed(2)} x=${m1End.pos[0].toFixed(1)} states=${[...m1States].join(",")}`, "y=21.25, x<-7, mantle seen", Math.abs(m1End.pos[1] - 21.25) < 0.03 && m1End.pos[0] < -7 && m1States.has("mantle"));
 
 // 2.0 m block at i=7 → z 9..11 (lane z=9.4 stays clear of the tall wall at z≥10).
 // Needs a jump: press Space near the face, mantle at the apex.

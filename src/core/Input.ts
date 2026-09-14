@@ -62,16 +62,15 @@ export class Input {
     window.addEventListener("blur", () => this.keys.clear());
   }
 
-  /** -1..1 strafe (positive = right) and forward (positive = forward). */
+  /**
+   * -1..1 strafe (positive = right) and forward (positive = forward). There is no speed
+   * modifier: movement is always at running pace (Shift is deliberately unbound).
+   */
   get moveX(): number {
     return (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) - (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0);
   }
   get moveZ(): number {
     return (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) - (this.keys.has("KeyS") || this.keys.has("ArrowDown") ? 1 : 0);
-  }
-  /** Shift held: drop from the default run to walking pace (precision on beams and ledges). */
-  get walk(): boolean {
-    return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
   }
   get jumpHeld(): boolean {
     return this.keys.has("Space");

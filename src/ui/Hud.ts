@@ -55,7 +55,6 @@ export class Hud {
     this.hint.className = "hint";
     this.hint.innerHTML =
       `<div><kbd>W A S D</kbd>move</div>` +
-      `<div><kbd>Shift</kbd>walk</div>` +
       `<div><kbd>Space</kbd>jump</div>` +
       `<div><kbd>Ctrl</kbd>slide</div>` +
       `<div><kbd>R</kbd>restart</div>` +
@@ -89,7 +88,6 @@ export class Hud {
       `<p>click to run</p>` +
       `<div class="keys">` +
       `<b>WASD</b><span>move</span>` +
-      `<b>Shift</b><span>walk</span>` +
       `<b>Space</b><span>jump</span>` +
       `<b>Ctrl / C</b><span>slide</span>` +
       `<b>R</b><span>restart</span>` +

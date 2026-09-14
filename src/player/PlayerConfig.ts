@@ -10,9 +10,12 @@ export const PLAYER = {
   height: 1.8,
   eyeHeight: 1.66,
 
-  /** Shift held, or strafing / backpedalling without forward input. */
-  walkSpeed: 5.5,
-  /** Default forward speed (plain W). */
+  /**
+   * Pure strafe / backpedal speed (A, D or S with no forward input). This is not a "walk"
+   * mode: there is no key that slows the player down on purpose.
+   */
+  sideSpeed: 5.5,
+  /** Forward speed: any W input (alone or with a strafe) runs at this. Running is the only pace. */
   sprintSpeed: 8.5,
   /** Ground acceleration / deceleration (m/s²). 8.5 m/s in ~0.14 s; stop in ~0.1 s. */
   groundAccel: 60,
@@ -28,7 +31,7 @@ export const PLAYER = {
   /** Kerbs and parapets up to this height are climbed automatically with no animation. */
   stepHeight: 0.42,
 
-  /** Distance per footstep at walk / sprint; bob and footstep audio are driven by it. */
+  /** Distance per footstep at side / sprint pace; bob and footstep audio are driven by it. */
   strideWalk: 2.3,
   strideSprint: 2.75,
 

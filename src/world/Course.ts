@@ -66,7 +66,7 @@ export function buildCourse(kit: Kit): CourseData {
 
   // ---------------------------------------------------------------- B (18.5)
   const B = 18.5;
-  // 6.5 m gap, 1.5 m drop: sprint required (walk-jump carries ~6.0 m).
+  // 6.5 m gap, 1.5 m drop: needs the full 8.5 m/s run (a 5.5 m/s jump carries ~6.0 m).
   kit.building({ x0: 34.5, x1: 58, z0: Z0, z1: Z1, top: B, tint: kit.pickTint(1), accent: ["w", "e"], tag: "route" });
   // Penthouse block — the mantle. AC unit beside it is the slow route.
   kit.building({ x0: 44, x1: 52, z0: Z0, z1: Z1, top: B + 2.1, base: B, tint: 0x9c9993, parapet: { n: 0, s: 0, e: 0, w: 0 }, windows: false, tag: "route" });

@@ -2,7 +2,7 @@
  * First-person body. Owns position, velocity, yaw/pitch and the locomotion state machine.
  * Runs inside the fixed step; the camera rig reads it at render time with interpolation.
  *
- * Milestone 1: ground / air with sprint-by-default (Shift walks), jump, coyote time, jump buffering, auto step-up,
+ * Milestone 1: ground / air with running as the only pace (no walk key), jump, coyote time, jump buffering, auto step-up,
  * landing classification and stride tracking. Parkour moves (mantle, slide, wall-run) plug in
  * as additional states in `src/player/moves/`.
  */
@@ -196,9 +196,9 @@ export class PlayerController {
     const hasInput = this.wish.lengthSq() > 0;
     if (hasInput) this.wish.normalize();
 
-    // Running is the default: any forward-ish intent (W, with or without a strafe) goes at sprint
-    // speed unless Shift is held to walk. Pure strafing and backpedalling stay at walking pace.
-    const sprinting = !input.walk && input.moveZ > 0 && !this.crouched;
+    // Running is the only pace: any forward-ish intent (W, with or without a strafe) goes at
+    // sprint speed. There is no walk modifier. Pure strafing and backpedalling use sideSpeed.
+    const sprinting = input.moveZ > 0 && !this.crouched;
     this.sprintBlend = moveToward(this.sprintBlend, sprinting && hasInput ? 1 : 0, dt / 0.25);
 
     if (input.consume("jump")) this.jumpBuffer = PLAYER.jumpBuffer;
@@ -219,7 +219,7 @@ export class PlayerController {
     // Holding Ctrl in the air means "slide on landing", not "stay small".
     if (this.crouched && !this.sliding && (!wantSlide || !this.grounded)) this.tryStand();
 
-    const targetSpeed = this.crouched ? PLAYER.crouchSpeed : sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
+    const targetSpeed = this.crouched ? PLAYER.crouchSpeed : sprinting ? PLAYER.sprintSpeed : PLAYER.sideSpeed;
 
     // --- horizontal velocity --------------------------------------------------------
     this.hvel.set(this.vel.x, this.vel.z);
