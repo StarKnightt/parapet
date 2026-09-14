@@ -44,6 +44,9 @@ const POSES = {
   back: { x: 60, y: 15.5, z: -4, yaw: 90, pitch: 6 },
   overview: { x: 40, y: 60, z: 70, yaw: -60, pitch: -30 },
   pad: { x: -4, y: 20, z: 0, yaw: 90, pitch: -6 },
+  // Straight into the sun (SUN_DIR azimuth) and directly away from it.
+  sunward: { x: 116, y: 19, z: 0, yaw: 84, pitch: 18 },
+  leeward: { x: 62, y: 15.5, z: 3, yaw: -96, pitch: 4 },
 };
 
 const poses = ONLY.length ? ONLY : Object.keys(POSES);

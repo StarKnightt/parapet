@@ -17,7 +17,7 @@
  */
 import { createRng } from "../core/math";
 import type { Aabb, Vec3 } from "./CollisionWorld";
-import type { Kit } from "./Kit";
+import type { Edge, Kit } from "./Kit";
 
 export interface Checkpoint {
   name: string;
@@ -115,6 +115,8 @@ export function buildCourse(kit: Kit): CourseData {
   }
   kit.box([115, D + 7.3, -2.4], [119.8, D + 10.3, 2.4], { mat: "metal", tint: 0x7b7e82 });
   kit.cantilever("s", Z1, 110, 5, D - 4, 3.2, { tag: "offroute", tint: kit.pickTint(3) });
+  // Dropping onto that slab is allowed: brackets up the face bring you back to the parapet.
+  kit.ledgeLadder("s", Z1, 110, D - 4, D + 1.0, false, { tag: "offroute", tint: kit.pickTint(3) });
 
   // ---------------------------------------------------------------- E (14)
   const E = 14;
@@ -165,7 +167,14 @@ export function buildCourse(kit: Kit): CourseData {
   teleports.push({ pos: [-4, P, 2.5], yaw: Math.PI / 2, name: "Calibration pad" });
 
   // ---------------------------------------------------------------- neighbourhood + skyline
-  buildNeighbourhood(kit);
+  buildNeighbourhood(kit, [
+    { x0: 0, x1: 28, top: A, tint: kit.pickTint(0) },
+    { x0: 34.5, x1: 58, top: B, tint: kit.pickTint(1) },
+    { x0: 60, x1: 90, top: C, tint: kit.pickTint(2) },
+    { x0: 98.5, x1: 120, top: D, tint: kit.pickTint(3) },
+    { x0: 123, x1: 150, top: E, tint: kit.pickTint(4) },
+    { x0: 157.5, x1: 181, top: F, tint: kit.pickTint(5) },
+  ]);
 
   // Ground: streets far below.
   kit.box([-400, -1, -400], [400, 0, 400], { mat: "dark", collide: false, shadow: false });
@@ -178,11 +187,21 @@ export function buildCourse(kit: Kit): CourseData {
   };
 }
 
+interface RouteRoof {
+  x0: number;
+  x1: number;
+  top: number;
+  tint: number;
+}
+
 /**
- * Off-route blocks either side of the street (collidable, tagged so landing on one respawns
- * you) and a far skyline that only exists to give the fog something to eat.
+ * Off-route blocks either side of the street and a far skyline that only exists to give the
+ * fog something to eat. Landing off the line is allowed, so every low block a jump from a
+ * route roof can reach gets a way back: its street parapet is a kerb you can sprint off, its
+ * roof sits no more than 5 m under the line, and a ledge ladder climbs the route facade
+ * opposite. Blocks above the line are just walls from the roof and need nothing.
  */
-function buildNeighbourhood(kit: Kit): void {
+function buildNeighbourhood(kit: Kit, route: RouteRoof[]): void {
   const rng = createRng(99);
   const pick = () => kit.pickTint(Math.floor(rng() * 6));
   // Street canyon: masses either side of the route. Every third one is a tall ribbed tower
@@ -215,9 +234,26 @@ function buildNeighbourhood(kit: Kit): void {
           if (rng() < 0.6) kit.doorway(face, fc, x + w * (0.3 + rng() * 0.4), 9 + rng() * 8, 2.4, 3.2, 2.6, { tint: pick(), tag: "offroute", porch: true });
           if (rng() < 0.6) kit.cantilever(face, fc, x + w * (0.25 + rng() * 0.5), 4 + rng() * 3, 14 + rng() * 10, 2.4 + rng() * 1.6, { tint: pick(), tag: "offroute" });
         } else {
-          const top = 5 + rng() * 20;
-          kit.building({ x0: x, x1: x + w, z0, z1, top, tint: pick(), parapet: { n: 0.8, s: 0.8, e: 0.8, w: 0.8 }, tag: "offroute" });
+          let top = 5 + rng() * 20;
+          // The route roof this block faces across the alley (largest x overlap).
+          let near: RouteRoof | null = null;
+          let best = 3;
+          for (const r of route) {
+            const ov = Math.min(r.x1, x + w) - Math.max(r.x0, x);
+            if (ov > best) {
+              best = ov;
+              near = r;
+            }
+          }
+          const ret = near !== null && top < near.top - 0.6 ? near : null;
+          if (ret) top = Math.max(top, ret.top - 5);
+          const street: Edge = side < 0 ? "s" : "n";
+          kit.building({ x0: x, x1: x + w, z0, z1, top, tint: pick(), parapet: { n: 0.8, s: 0.8, e: 0.8, w: 0.8, [street]: 0.4 }, tag: "offroute" });
           if (rng() < 0.6) kit.acUnit(x + w / 2 + (rng() - 0.5) * w * 0.5, top, (z0 + z1) / 2 + (rng() - 0.5) * depth * 0.5, 1.6 + rng() * 1.6, 1.0 + rng() * 0.8, 1.4 + rng() * 1.2);
+          if (ret) {
+            const u = (Math.max(ret.x0, x) + Math.min(ret.x1, x + w)) / 2;
+            kit.ledgeLadder(side < 0 ? "n" : "s", side < 0 ? -8 : 8, u, top, ret.top + 1.0, true, { tag: "offroute", tint: ret.tint });
+          }
         }
       }
       x += w + gap;

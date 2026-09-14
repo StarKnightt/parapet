@@ -41,6 +41,11 @@ export class CollisionWorld {
     return this.all.length;
   }
 
+  /** Every collider, for audits and the debug harness. Read-only. */
+  get boxes(): readonly Collider[] {
+    return this.all;
+  }
+
   add(min: Vec3, max: Vec3, surface: Surface = "concrete", tag?: string): Collider {
     const c: Collider = { id: this.nextId++, min: [...min], max: [...max], surface, tag, _stamp: 0 };
     // Normalise in case a builder passed a negative size.

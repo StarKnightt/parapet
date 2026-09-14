@@ -75,9 +75,9 @@ export interface TowerOpts {
 
 const MAX_LIGHTS = 14;
 
-const PALETTE = [0xb9b5ae, 0xaaa79f, 0xc3beb5, 0x9f9c97, 0xb1ada8, 0xbcb5aa];
-const ROOF_TINT = 0x9e9e9b;
-const PARAPET_TINT = 0xd2cec6;
+const PALETTE = [0xcec5b7, 0xbfb5a6, 0xd6ccbd, 0xb3aca1, 0xc7bdb0, 0xd0c5b2];
+const ROOF_TINT = 0xd4cbbd;
+const PARAPET_TINT = 0xdad1c2;
 const PARAPET_T = 0.3;
 const LIP_H = 0.35;
 const PAINT_T = 0.05;
@@ -507,6 +507,38 @@ export class Kit {
     // Low curb at the tip.
     if (axis === 0) this.box([out > 0 ? p1 - 0.2 : p0, y, u - w / 2], [out > 0 ? p1 : p0 + 0.2, y + 0.16, u + w / 2], { ...opts, tint: PARAPET_TINT });
     else this.box([u - w / 2, y, out > 0 ? p1 - 0.2 : p0], [u + w / 2, y + 0.16, out > 0 ? p1 : p0 + 0.2], { ...opts, tint: PARAPET_TINT });
+  }
+
+  /**
+   * Return ladder up a facade, for getting back onto a route roof from a lower neighbour: an
+   * optional cantilevered landing at `yFrom` (so the alley becomes a flat jump), then a zig-zag
+   * of bracketed ledges every 1.4 m — each a mantle from the one below — until the parapet top
+   * `yTo` is within a jump-mantle. Reads as service brackets on the face; tinted like the mass.
+   */
+  ledgeLadder(face: Edge, faceCoord: number, u: number, yFrom: number, yTo: number, landing: boolean, opts: BoxOpts = {}): void {
+    const out = face === "e" || face === "s" ? 1 : -1;
+    const axis: 0 | 2 = face === "e" || face === "w" ? 0 : 2;
+    const tint = opts.tint ?? 0x9a968f;
+    if (landing) this.cantilever(face, faceCoord, u, 2.6, yFrom, 2.4, { ...opts, tint });
+    const rise = 1.4;
+    const w = 1.6;
+    const depth = 0.8;
+    const thick = 0.22;
+    const slope = axis === 0 ? (out > 0 ? "x+" : "x-") : out > 0 ? "z+" : "z-";
+    const p0 = Math.min(faceCoord, faceCoord + out * depth);
+    const p1 = Math.max(faceCoord, faceCoord + out * depth);
+    let y = yFrom;
+    for (let k = 1; yTo - y > 2.3; k++) {
+      y += rise;
+      const c = u + (k % 2 ? 1 : -1) * 1.0;
+      if (axis === 0) {
+        this.box([p0, y - thick, c - w / 2], [p1, y, c + w / 2], { ...opts, tint });
+        this.wedge([p0, y - thick - 0.5, c - w / 2 + 0.3], [p1, y - thick, c + w / 2 - 0.3], slope, { tint });
+      } else {
+        this.box([c - w / 2, y - thick, p0], [c + w / 2, y, p1], { ...opts, tint });
+        this.wedge([c - w / 2 + 0.3, y - thick - 0.5, p0], [c + w / 2 - 0.3, y - thick, p1], slope, { tint });
+      }
+    }
   }
 
   /** Circular vent on a facade: ring + dark grille. Visual only. */

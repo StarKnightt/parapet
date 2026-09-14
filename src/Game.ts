@@ -54,7 +54,14 @@ export class Game {
   private timerRunning = false;
   private finished = false;
   private checkpoint = 0;
-  private offRouteTimer = 0;
+  /**
+   * Height of the surface the player last stood on. The kill plane hangs `killDepth` below
+   * the lower of this and the checkpoint floor, so a run that drops onto a lower neighbour
+   * roof is not killed for standing there, but falling off it still is.
+   */
+  private lastStoodY = 0;
+  /** Toast "off the line" once per run, the first time a foot lands off the route. */
+  private leftRoute = false;
   /** Run time at each checkpoint index (0 = start, unused). */
   private splits: number[] = [];
   /** Simulation speed; dips on the finish line for a beat of slow motion. */
@@ -93,6 +100,7 @@ export class Game {
     this.player.events = {
       onLand: (impact, surface) => {
         this.rig.land(impact);
+        this.body.land(impact);
         this.audio.land(impact, surface);
       },
       onStepUp: (dy) => this.rig.stepUp(dy),
@@ -111,6 +119,7 @@ export class Game {
       onWallRunEnd: () => (this.rig.extraRoll = 0),
       onWallJump: () => {
         this.rig.punchFov(4);
+        this.body.wallJump();
         this.audio.wallJump();
       },
     };
@@ -139,7 +148,10 @@ export class Game {
     const s = this.course.spawn;
     this.player.teleport(s.pos[0], s.pos[1] + 0.05, s.pos[2], s.yaw);
     this.rig.reset();
+    this.body.reset();
     this.checkpoint = 0;
+    this.lastStoodY = s.pos[1];
+    this.leftRoute = false;
     this.time = 0;
     this.timerRunning = false;
     this.finished = false;
@@ -166,6 +178,8 @@ export class Game {
     const cp = this.course.checkpoints[this.checkpoint] ?? { spawn: this.course.spawn.pos, yaw: this.course.spawn.yaw };
     this.player.teleport(cp.spawn[0], cp.spawn[1] + 0.05, cp.spawn[2], cp.yaw);
     this.rig.reset();
+    this.body.reset();
+    this.lastStoodY = cp.spawn[1];
     this.rig.punchFov(-6);
     this.falls++;
     this.hud.flash(true);
@@ -246,6 +260,7 @@ export class Game {
     if (tp !== null && tp > 0 && this.course.teleports[tp - 1]) {
       const t = this.course.teleports[tp - 1];
       this.player.teleport(t.pos[0], t.pos[1] + 0.05, t.pos[2], t.yaw);
+      this.lastStoodY = t.pos[1];
     }
 
     this.player.fixedUpdate(dt, this.input);
@@ -267,24 +282,26 @@ export class Game {
     }
     if (!this.finished && this.inside(this.course.finish, p)) this.finish();
 
-    // Fell off or landed somewhere off the line.
-    const cpY = (this.course.checkpoints[this.checkpoint]?.spawn ?? this.course.spawn.pos)[1];
-    if (p.y < cpY - PLAYER.killDepth) this.respawn();
-    if (this.player.grounded && this.player.groundTag === "offroute") {
-      this.offRouteTimer += dt;
-      if (this.offRouteTimer > 0.35) {
-        this.offRouteTimer = 0;
-        this.respawn();
+    // Off the line is allowed: neighbour roofs, buttress tops and cantilevers are places to
+    // stand and find a way back from. The only death is the fall: `killDepth` below the lower
+    // of the checkpoint floor and the last surface stood on.
+    if (this.player.grounded) {
+      this.lastStoodY = p.y;
+      if (!this.leftRoute && this.player.groundTag === "offroute") {
+        this.leftRoute = true;
+        this.hud.showToast("off the line", 1.4);
       }
-    } else {
-      this.offRouteTimer = 0;
     }
+    const cpY = (this.course.checkpoints[this.checkpoint]?.spawn ?? this.course.spawn.pos)[1];
+    if (p.y < Math.min(cpY, this.lastStoodY) - PLAYER.killDepth) this.respawn();
   }
 
   private frameUpdate(dt: number, alpha: number): void {
     this.rig.look(this.input, this.player);
-    this.rig.update(dt, alpha, this.player, this.input);
-    this.body.update(dt, alpha, this.player, this.rig.camera, this.rig.dip);
+    // Camera springs and limb damping run in simulation time so slow motion slows them too.
+    const sdt = dt * this.timeScale;
+    this.rig.update(sdt, alpha, this.player, this.input);
+    this.body.update(sdt, alpha, this.player, this.rig.camera, this.rig.dip);
     this.lighting.follow(this.rig.camera.position);
     this.elapsed += dt;
     this.sky.update(this.elapsed, this.rig.camera.position);
@@ -354,6 +371,16 @@ export class Game {
     this.post.setQuality(q);
   }
 
+  /** Simulation speed for the capture harness (1 = real time). */
+  setTimeScale(k: number): void {
+    this.timeScale = Math.max(0.01, k);
+  }
+
+  /** Every collision box (tag, min, max) for course audits. */
+  colliders(): { tag: string | undefined; min: number[]; max: number[] }[] {
+    return this.world.boxes.map((c) => ({ tag: c.tag, min: [...c.min], max: [...c.max] }));
+  }
+
   stats(): Record<string, unknown> {
     const gl = this.renderer.getContext();
     const dbg = gl.getExtension("WEBGL_debug_renderer_info");
@@ -373,6 +400,10 @@ export class Game {
       checkpoint: this.checkpoint,
       time: this.time,
       finished: this.finished,
+      falls: this.falls,
+      groundTag: this.player.groundTag,
+      mantleT: this.player.mantleT,
+      hands: this.body.handPositions(),
       audio: this.audio.state,
     };
   }

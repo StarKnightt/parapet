@@ -5,7 +5,7 @@
  * Everything here is cosmetic: the controller never reads the camera.
  */
 import * as THREE from "three";
-import { damp, DEG } from "../core/math";
+import { clamp, damp, DEG, smoothstep } from "../core/math";
 import type { Input } from "../core/Input";
 import { PLAYER } from "./PlayerConfig";
 import type { PlayerController } from "./PlayerController";
@@ -25,6 +25,7 @@ export class CameraRig {
   private dipV = 0;
   private stepOffset = 0;
   private roll = 0;
+  private slideNod = 0;
   private eyeH: number = PLAYER.eyeHeight;
   /** External roll request in radians (wall-run sets this). */
   extraRoll = 0;
@@ -60,6 +61,7 @@ export class CameraRig {
     this.dipV = 0;
     this.stepOffset = 0;
     this.roll = 0;
+    this.slideNod = 0;
     this.extraRoll = 0;
     this.bobAmount = 0;
     this.eyeH = PLAYER.eyeHeight;
@@ -112,9 +114,16 @@ export class CameraRig {
       this.tmp.z + rz * bobX,
     );
 
-    // Landing dip nods the view down a touch; a mantle nods down toward the hands then up.
-    const mantleNod = -0.30 * Math.sin(player.mantleT * Math.PI);
-    this.euler.set(player.pitch + this.dipY * 0.45 + mantleNod, player.yaw, this.roll);
+    // Landing dip nods the view down a touch. A mantle nods down hard and early (toward the
+    // hands planting on the lip), holds through the pull, then swings up as the body pushes
+    // over; each arm's pull rocks the view a couple of degrees, right then left.
+    const mt = player.mantleT;
+    const nodK = mt <= 0 ? 0 : smoothstep(mt / 0.12) * (1 - smoothstep((mt - 0.42) / 0.45));
+    const mantleNod = -0.62 * nodK;
+    const mantleRoll = 2.5 * DEG * Math.sin(Math.PI * 2 * clamp((mt - 0.12) / 0.6, 0, 1));
+    // Sliding looks down at the ground the trailing hand skims.
+    this.slideNod = damp(this.slideNod, player.sliding && player.grounded ? -0.1 : 0, 0.12, dt);
+    this.euler.set(player.pitch + this.dipY * 0.45 + mantleNod + this.slideNod, player.yaw, this.roll + mantleRoll);
     this.camera.quaternion.setFromEuler(this.euler);
 
     this.fovPunch *= Math.exp(-dt / 0.18);

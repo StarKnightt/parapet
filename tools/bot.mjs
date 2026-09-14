@@ -389,6 +389,65 @@ await sleep(2500);
 const back = await stats();
 report("fall → respawn", `x=${back.pos[0].toFixed(1)} y=${back.pos[1].toFixed(2)} ${back.state} fell=${fall.some((s) => s.pos[1] < 17)}`, "back on a roof, grounded", back.grounded && back.pos[1] > 12 && back.speed < 0.1);
 
+// ---- 13. off-route: land on a neighbour, stay, and climb back --------------------------
+// Leave A southward over the parapet onto the low block (top 15). No respawn: you can stay.
+const until = async (pred, ms) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const s = await stats();
+    if (pred(s)) return s;
+    await sleep(6);
+  }
+  return null;
+};
+await pose(17.4, 20, -2, 180);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+await until((s) => s.pos[2] > 5.2, 3000);
+await tap("Space");
+const offLanded = await until((s) => s.grounded && s.pos[2] > 13, 4000);
+await releaseAll();
+await sleep(1200);
+const offStayed = await stats();
+report("off-route: land and stay", `y=${offStayed.pos[1].toFixed(2)} tag=${offStayed.groundTag} falls=${offStayed.falls}`, "grounded on offroute, no respawn", !!offLanded && offStayed.grounded && offStayed.groundTag === "offroute" && offStayed.falls === offLanded.falls);
+
+// Back: sprint off the kerb onto the landing slab, then the ledge ladder up A's south face.
+await pose(17.4, 15, 18, 0);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+await until((s) => s.pos[2] < 15.0, 3000);
+await tap("Space");
+const onSlab = await until((s) => s.grounded && s.pos[2] < 11 && s.pos[1] > 14.9, 3000);
+await releaseAll();
+// Each ledge is a mantle from the one below, alternating east/west along the face.
+const climb = async (yaw, hug, y) => {
+  const s = await stats();
+  await pose(s.pos[0], s.pos[1], s.pos[2], yaw);
+  await sleep(150);
+  await key("KeyW", true);
+  await key(hug, true);
+  const r = await until((q) => q.grounded && q.pos[1] > y - 0.1, 3000);
+  await releaseAll();
+  return r;
+};
+const l1 = onSlab && (await climb(-90, "KeyA", 16.4));
+const l2 = l1 && (await climb(90, "KeyD", 17.8));
+const l3 = l2 && (await climb(-90, "KeyA", 19.2));
+let backOnA = null;
+if (l3) {
+  const s = await stats();
+  await pose(s.pos[0], s.pos[1], s.pos[2], 0);
+  await sleep(150);
+  await key("KeyW", true);
+  await sleep(80);
+  await tap("Space");
+  backOnA = await until((q) => q.grounded && q.pos[1] > 19.9 && q.pos[2] < 7.7, 3000);
+  await releaseAll();
+}
+report("off-route: climb back to A", `slab=${!!onSlab} ledges=${[l1, l2, l3].filter(Boolean).length}/3 back=${backOnA ? `y=${backOnA.pos[1].toFixed(2)} ${backOnA.groundTag}` : "no"}`, "slab, 3 ledges, roof A (route)", !!backOnA && backOnA.groundTag === "route");
+
 await browser.close();
 if (errors.length) {
   console.error("Page errors:", errors);

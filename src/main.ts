@@ -7,6 +7,8 @@ declare global {
       stats: () => Record<string, unknown>;
       key: (code: string, down: boolean) => void;
       setQuality: (q: "high" | "low") => void;
+      colliders: () => { tag: string | undefined; min: number[]; max: number[] }[];
+      setTimeScale: (k: number) => void;
       ready: boolean;
     };
   }
@@ -23,5 +25,7 @@ window.__parapet = {
   stats: () => game.stats(),
   key: (code, down) => game.key(code, down),
   setQuality: (q) => game.setQuality(q),
+  colliders: () => game.colliders(),
+  setTimeScale: (k) => game.setTimeScale(k),
   ready: true,
 };

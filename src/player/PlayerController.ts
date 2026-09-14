@@ -7,7 +7,7 @@
  * as additional states in `src/player/moves/`.
  */
 import * as THREE from "three";
-import { clamp, easeOutCubic, moveToward, smoothstep } from "../core/math";
+import { clamp, moveToward, smoothstep } from "../core/math";
 import type { Input } from "../core/Input";
 import type { Aabb, Collider, CollisionWorld, Surface } from "../world/CollisionWorld";
 import { JUMP_SPEED, PLAYER } from "./PlayerConfig";
@@ -66,8 +66,17 @@ export class PlayerController {
   private mDuration = 0.3;
   /** Height of the ledge being mantled (for the arm reach). */
   mantleLedge = 0;
+  /**
+   * World point on the lip being mantled: on the face plane, at the lip top, centred on the
+   * body. The hands plant here (offset sideways) and stay put while the body climbs past.
+   */
+  readonly mantleLip = new THREE.Vector3();
+  /** Unit horizontal direction from the body into the mantled face (world). */
+  readonly mantleDir = new THREE.Vector3(0, 0, -1);
   /** Which side the wall is on while wall-running, relative to facing (0 = none). */
   wallSide: -1 | 0 | 1 = 0;
+  /** Unit normal of the wall being run, pointing out of the wall toward the body (world). */
+  readonly wallNormal = new THREE.Vector3();
 
   /** 0..1 through the current mantle (0 when not mantling). */
   get mantleT(): number {
@@ -88,6 +97,8 @@ export class PlayerController {
   /** +1 if the wall lies on the positive side of `wallAxis`. */
   private wallDir = 1;
   private wallTime = 0;
+  /** World coordinate of the wall face along `wallAxis`. */
+  private wallCoord = 0;
   private wallCool = 0;
   private lastWallFace: { axis: 0 | 2; dir: number; coord: number } | null = null;
   private wallChain = 0;
@@ -107,6 +118,23 @@ export class PlayerController {
   /** Horizontal speed, m/s. */
   get speed(): number {
     return Math.hypot(this.vel.x, this.vel.z);
+  }
+
+  /** Seconds spent on the current wall (0 when not wall-running). */
+  get wallRunTime(): number {
+    return this.wall ? this.wallTime : 0;
+  }
+
+  /**
+   * Closest point on the wall being run to world point `p`, written to `out`. Returns false
+   * (and leaves `out` alone) when not wall-running.
+   */
+  wallPoint(p: THREE.Vector3, out: THREE.Vector3): boolean {
+    if (!this.wall) return false;
+    out.copy(p);
+    if (this.wallAxis === 0) out.x = this.wallCoord;
+    else out.z = this.wallCoord;
+    return true;
   }
 
   teleport(x: number, y: number, z: number, yawRad: number): void {
@@ -440,6 +468,17 @@ export class PlayerController {
     this.mDuration = PLAYER.mantleDurationMin + (PLAYER.mantleDurationMax - PLAYER.mantleDurationMin) * k;
     this.mT = 0;
     this.mantleLedge = ledge;
+    // Lip anchor for the hands: on the face plane, at the lip, centred on the body.
+    const face = dir > 0 ? hit.min[axis] : hit.max[axis];
+    this.mantleLip.set(this.pos.x, top, this.pos.z);
+    this.mantleDir.set(0, 0, 0);
+    if (axis === 0) {
+      this.mantleLip.x = face;
+      this.mantleDir.x = dir;
+    } else {
+      this.mantleLip.z = face;
+      this.mantleDir.z = dir;
+    }
 
     // Keep some approach speed, redirected over the ledge.
     const approach = floorBeyond ? clamp(this.speed * PLAYER.mantleKeep, 3, 7) : 0;
@@ -459,9 +498,10 @@ export class PlayerController {
 
   private updateMantle(dt: number): void {
     this.mT = Math.min(1, this.mT + dt / this.mDuration);
-    // Rise first (fast), then push over the lip.
-    const up = easeOutCubic(Math.min(1, this.mT * 1.4));
-    const over = smoothstep((this.mT - 0.25) / 0.75);
+    // Grab first (a beat with the hands on the lip), pull up, then push over the lip. The
+    // horizontal move trails the rise so the body clears the corner before it goes forward.
+    const up = smoothstep((this.mT - 0.1) / 0.55);
+    const over = smoothstep((this.mT - 0.3) / 0.7);
     this.pos.x = this.mFrom.x + (this.mTo.x - this.mFrom.x) * over;
     this.pos.z = this.mFrom.z + (this.mTo.z - this.mFrom.z) * over;
     this.pos.y = this.mFrom.y + (this.mTo.y - this.mFrom.y) * up;
@@ -515,6 +555,10 @@ export class PlayerController {
         // Snap flush to the face and kick upward a little.
         const face = dir > 0 ? best.min[axis] : best.max[axis];
         this.lastWallFace = { axis, dir, coord: face };
+        this.wallCoord = face;
+        this.wallNormal.set(0, 0, 0);
+        if (axis === 0) this.wallNormal.x = -dir;
+        else this.wallNormal.z = -dir;
         const r = PLAYER.radius;
         if (axis === 0) this.pos.x = face - dir * (r + 0.005);
         else this.pos.z = face - dir * (r + 0.005);
