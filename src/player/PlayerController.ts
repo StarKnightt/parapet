@@ -102,8 +102,14 @@ export class PlayerController {
   private wallCool = 0;
   private lastWallFace: { axis: 0 | 2; dir: number; coord: number } | null = null;
   private wallChain = 0;
-  /** Wall-runs need a deliberate jump; walking off a ledge beside a wall does not attach. */
+  /** Wall-runs normally need a deliberate jump; running off a ledge attaches only while pressing into the wall. */
   private jumpedSinceGround = false;
+  /** Seconds into the run when the rise ended and the plateau began (-1 while still rising). */
+  private wallPlateauT0 = -1;
+  /** Velocity away from the wall built up by look-steering (m/s); 0 while pressed on. */
+  private wallPeel = 0;
+  /** Seconds spent looking hard away from the wall. */
+  private wallLookOffT = 0;
   private readonly probe: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
   private readonly hits: Collider[] = [];
   private readonly box: Aabb = { min: [0, 0, 0], max: [0, 0, 0] };
@@ -123,6 +129,21 @@ export class PlayerController {
   /** Seconds spent on the current wall (0 when not wall-running). */
   get wallRunTime(): number {
     return this.wall ? this.wallTime : 0;
+  }
+
+  /**
+   * How firmly the wall is holding you: 1 through the rise and plateau, fading to 0 as gravity
+   * ramps back in (0 when not wall-running). Drives the lean, the scrape and the hand cadence.
+   */
+  get wallGrip(): number {
+    if (!this.wall) return 0;
+    return 1 - this.wallGravityK();
+  }
+
+  /** 0..1 progress of the gravity ramp after the plateau (0 while rising or on the plateau). */
+  private wallGravityK(): number {
+    if (this.wallPlateauT0 < 0) return 0;
+    return clamp((this.wallTime - this.wallPlateauT0 - PLAYER.wallPlateau) / PLAYER.wallGravityRamp, 0, 1);
   }
 
   /**
@@ -258,27 +279,53 @@ export class PlayerController {
       !this.wall &&
       !this.grounded &&
       !this.crouched &&
-      this.jumpedSinceGround &&
       this.wallCool <= 0 &&
       input.moveZ > 0 &&
-      this.vel.y > PLAYER.wallMaxFall
+      this.vel.y > PLAYER.wallMaxFall &&
+      (this.jumpedSinceGround || this.vel.y > PLAYER.wallFallAttach)
     ) {
-      this.tryWallRun();
+      // From a fall (no jump) the wall only takes you if you are pressing into it.
+      this.tryWallRun(!this.jumpedSinceGround);
     }
     if (this.wall) {
       this.wallTime += dt;
-      // Hold speed along the wall (light drag), kill the component into it.
-      const along = this.wallAxis === 0 ? 2 : 0;
+      if (this.wallPlateauT0 < 0 && this.vel.y <= 0) this.wallPlateauT0 = this.wallTime;
+      const axis = this.wallAxis;
+      const along = axis === 0 ? 2 : 0;
+      // Hold speed along the wall (very light drag).
       const v = along === 0 ? this.vel.x : this.vel.z;
       const nv = Math.sign(v) * Math.max(0, Math.abs(v) - PLAYER.wallDrag * dt);
       if (along === 0) this.vel.x = nv;
       else this.vel.z = nv;
-      if (this.wallAxis === 0) this.vel.x = this.wallDir * 0.6; // gentle press into the wall
-      else this.vel.z = this.wallDir * 0.6;
+
+      // Look-steering: the run is not on rails. Looking away from the wall past the dead zone
+      // turns the velocity toward the look direction (peeling off); looking hard away for a
+      // beat releases the wall outright. Looking along or into it keeps you pressed on.
+      const lookAway = (axis === 0 ? this.fwd.x : this.fwd.y) * -this.wallDir;
+      const awayDeg = lookAway > 0 ? Math.asin(Math.min(1, lookAway)) * (180 / Math.PI) : 0;
+      this.wallLookOffT = awayDeg > PLAYER.wallLookOff ? this.wallLookOffT + dt : 0;
+      const steerK = clamp((awayDeg - PLAYER.wallSteerDead) / (PLAYER.wallLookOff - PLAYER.wallSteerDead), 0, 1);
+      if (steerK > 0) this.wallPeel += Math.abs(nv) * Math.sin(PLAYER.wallSteer * (Math.PI / 180) * steerK * dt);
+      else this.wallPeel = Math.max(0, this.wallPeel - 6 * dt);
+      if (this.wallPeel > 0.05) {
+        if (axis === 0) this.vel.x = -this.wallDir * this.wallPeel;
+        else this.vel.z = -this.wallDir * this.wallPeel;
+      } else {
+        // Press into the wall: enough to close any attract gap in ~0.1 s, never less than a lean.
+        const gap = this.wallGap();
+        const press = clamp(gap / 0.08, 0.6, 5);
+        if (axis === 0) this.vel.x = this.wallDir * press;
+        else this.vel.z = this.wallDir * press;
+      }
       this.hvel.set(this.vel.x, this.vel.z);
 
       if (this.jumpBuffer > 0) {
         this.wallJump();
+      } else if (this.wallLookOffT > PLAYER.wallLookOffTime) {
+        // Looked away: let go with a small shove so the body clears the face.
+        if (axis === 0) this.vel.x = -this.wallDir * 1.2;
+        else this.vel.z = -this.wallDir * 1.2;
+        this.detachWall();
       } else if (this.wallTime > PLAYER.wallMaxTime || Math.abs(nv) < PLAYER.wallMinSpeed * 0.6 || !this.wallStillThere()) {
         this.detachWall();
       }
@@ -307,8 +354,14 @@ export class PlayerController {
     // --- gravity ------------------------------------------------------------------
     let g = PLAYER.gravity;
     if (this.wall) {
-      const k = clamp(this.wallTime / PLAYER.wallGravityRamp, 0, 1);
-      g *= PLAYER.wallGravityStart + (1 - PLAYER.wallGravityStart) * k * k;
+      // Rise → plateau → sag: reduced gravity while rising, near-zero through the plateau,
+      // then a quadratic ramp back to full.
+      if (this.wallPlateauT0 < 0) {
+        g *= PLAYER.wallRiseGravity;
+      } else {
+        const k = this.wallGravityK();
+        g *= PLAYER.wallGravityStart + (1 - PLAYER.wallGravityStart) * k * k;
+      }
     }
     this.vel.y = Math.max(this.vel.y - g * dt, -PLAYER.terminalVelocity);
 
@@ -516,24 +569,32 @@ export class PlayerController {
     }
   }
 
-  /** Look for a runnable wall beside the body and attach to it. */
-  private tryWallRun(): boolean {
+  /**
+   * Look for a runnable wall beside the body and attach to it. `needPress` (attaching from a
+   * fall rather than a jump) requires the movement intent to point into the wall.
+   */
+  private tryWallRun(needPress: boolean): boolean {
     this.writeBox();
     for (const axis of [0, 2] as const) {
       const along = axis === 0 ? 2 : 0;
       const vAlong = along === 0 ? this.vel.x : this.vel.z;
       if (Math.abs(vAlong) < PLAYER.wallMinSpeed) continue;
       const vInto = axis === 0 ? this.vel.x : this.vel.z;
+      const wishInto = axis === 0 ? this.wish.x : this.wish.y;
       for (const dir of [1, -1]) {
         // Moving away from this side: not a candidate.
         if (vInto * dir < -0.8) continue;
+        // Pressing or looking into this side reaches further (the "attract"); a fall needs it.
+        const pressing = wishInto * dir > 0.2;
+        if (needPress && !pressing) continue;
+        const reach = pressing ? PLAYER.wallAttract : PLAYER.wallProbe;
         this.copyBox(this.box, this.probe);
         if (dir > 0) {
           this.probe.min[axis] = this.box.max[axis];
-          this.probe.max[axis] = this.box.max[axis] + PLAYER.wallProbe;
+          this.probe.max[axis] = this.box.max[axis] + reach;
         } else {
           this.probe.max[axis] = this.box.min[axis];
-          this.probe.min[axis] = this.box.min[axis] - PLAYER.wallProbe;
+          this.probe.min[axis] = this.box.min[axis] - reach;
         }
         // Only the upper body counts: kerbs and rails are not walls.
         this.probe.min[1] = this.box.min[1] + this.height * 0.45;
@@ -554,17 +615,29 @@ export class PlayerController {
         this.wallAxis = axis;
         this.wallDir = dir;
         this.wallTime = 0;
-        // Snap flush to the face and kick upward a little.
+        this.wallPlateauT0 = -1;
+        this.wallPeel = 0;
+        this.wallLookOffT = 0;
         const face = dir > 0 ? best.min[axis] : best.max[axis];
         this.lastWallFace = { axis, dir, coord: face };
         this.wallCoord = face;
         this.wallNormal.set(0, 0, 0);
         if (axis === 0) this.wallNormal.x = -dir;
         else this.wallNormal.z = -dir;
+        // Already touching: sit flush. Further out (attract): the press closes the gap over
+        // a few ticks so the camera is not yanked sideways.
         const r = PLAYER.radius;
-        if (axis === 0) this.pos.x = face - dir * (r + 0.005);
-        else this.pos.z = face - dir * (r + 0.005);
-        this.vel.y = Math.max(this.vel.y * PLAYER.wallKeepUp, PLAYER.wallKick);
+        if (this.wallGap() < 0.04) {
+          if (axis === 0) this.pos.x = face - dir * (r + 0.005);
+          else this.pos.z = face - dir * (r + 0.005);
+        }
+        // A brief rise, not a lob: keep some of the jump but clamp it.
+        this.vel.y = clamp(this.vel.y * PLAYER.wallKeepUp, PLAYER.wallKick, PLAYER.wallMaxRise);
+        // Planting a foot on the wall gives a little push along it.
+        const sp = Math.abs(vAlong);
+        const boosted = Math.min(sp + PLAYER.wallAttachBoost, Math.max(sp, PLAYER.sprintSpeed + PLAYER.wallAttachBoost));
+        if (along === 0) this.vel.x = Math.sign(vAlong) * boosted;
+        else this.vel.z = Math.sign(vAlong) * boosted;
         this.jumpBuffer = 0; // a press buffered before contact must not fire a same-tick wall-jump
         // Side relative to facing: wall on the right if its direction matches `right`.
         const rightAlong = axis === 0 ? this.right.x : this.right.y;
@@ -576,17 +649,30 @@ export class PlayerController {
     return false;
   }
 
+  /** Distance from the body's near face to the wall face (0 when flush). */
+  private wallGap(): number {
+    const r = PLAYER.radius;
+    const c = this.wallAxis === 0 ? this.pos.x : this.pos.z;
+    return Math.max(0, this.wallDir > 0 ? this.wallCoord - (c + r) : c - r - this.wallCoord);
+  }
+
+  /**
+   * Does the wall continue beside us? Reaches the attract distance (the gap may still be
+   * closing right after an attach); peeling off past `wallProbe` is a separate check.
+   */
   private wallStillThere(): boolean {
     if (!this.wall) return false;
+    if (this.wallPeel > 0.05 && this.wallGap() > PLAYER.wallProbe) return false;
     this.writeBox();
     this.copyBox(this.box, this.probe);
     const axis = this.wallAxis;
+    const reach = PLAYER.wallAttract + 0.05;
     if (this.wallDir > 0) {
       this.probe.min[axis] = this.box.max[axis];
-      this.probe.max[axis] = this.box.max[axis] + PLAYER.wallProbe;
+      this.probe.max[axis] = this.box.max[axis] + reach;
     } else {
       this.probe.max[axis] = this.box.min[axis];
-      this.probe.min[axis] = this.box.min[axis] - PLAYER.wallProbe;
+      this.probe.min[axis] = this.box.min[axis] - reach;
     }
     this.probe.min[1] = this.box.min[1] + this.height * 0.45;
     this.hits.length = 0;
@@ -598,21 +684,51 @@ export class PlayerController {
     if (!this.wall) return;
     this.wall = null;
     this.wallSide = 0;
+    this.wallPlateauT0 = -1;
+    this.wallPeel = 0;
+    this.wallLookOffT = 0;
     this.wallCool = PLAYER.wallCooldown;
     this.events.onWallRunEnd?.();
   }
 
+  /**
+   * Kick off the wall. The push follows the camera: a blend of straight-away and the look
+   * direction (never into the wall), on top of the along-wall speed. Aiming forward carries
+   * the run's momentum on; aiming away trades some of it for a real change of direction.
+   */
   private wallJump(): void {
     if (!this.wall) return;
     const axis = this.wallAxis;
-    const push = -this.wallDir * PLAYER.wallJumpPush;
-    if (axis === 0) {
-      this.vel.x = push;
-      this.vel.z *= PLAYER.wallJumpKeep;
-    } else {
-      this.vel.z = push;
-      this.vel.x *= PLAYER.wallJumpKeep;
+    const along = axis === 0 ? 2 : 0;
+    const nx = this.wallNormal.x;
+    const nz = this.wallNormal.z;
+    // Look direction with any into-the-wall component removed.
+    const lookAway = Math.max(0, this.fwd.x * nx + this.fwd.y * nz);
+    const into = Math.min(0, this.fwd.x * nx + this.fwd.y * nz);
+    const lx = this.fwd.x - nx * into;
+    const lz = this.fwd.y - nz * into;
+    const mix = PLAYER.wallJumpLookMix;
+    let dx = nx * (1 - mix) + lx * mix;
+    let dz = nz * (1 - mix) + lz * mix;
+    const dl = Math.hypot(dx, dz) || 1;
+    dx /= dl;
+    dz /= dl;
+    const keep = PLAYER.wallJumpKeep - PLAYER.wallJumpTurn * lookAway;
+    const vAlong = (along === 0 ? this.vel.x : this.vel.z) * keep;
+    let ax = (along === 0 ? vAlong : 0) + dx * PLAYER.wallJumpPush;
+    let az = (along === 2 ? vAlong : 0) + dz * PLAYER.wallJumpPush;
+    // Cap the result by trimming the along-wall part; the away push is never reduced.
+    const cap = Math.max(Math.abs(vAlong), PLAYER.wallJumpMaxSpeed);
+    if (Math.hypot(ax, az) > cap) {
+      const away = ax * nx + az * nz;
+      const alongV = along === 0 ? ax : az;
+      const fit = Math.sqrt(Math.max(0, cap * cap - away * away));
+      const trimmed = Math.sign(alongV) * Math.min(Math.abs(alongV), fit);
+      if (along === 0) ax = trimmed;
+      else az = trimmed;
     }
+    this.vel.x = ax;
+    this.vel.z = az;
     this.hvel.set(this.vel.x, this.vel.z);
     // Each successive wall-jump in one airtime lifts less, so parallel walls are not a ladder.
     this.vel.y = JUMP_SPEED * PLAYER.wallJumpUp * Math.pow(PLAYER.wallChainDecay, this.wallChain);

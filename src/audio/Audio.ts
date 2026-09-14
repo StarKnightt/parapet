@@ -88,7 +88,9 @@ export class GameAudio {
   }
 
   /** Per frame: drive the continuous layers. */
-  update(dt: number, speed: number, grounded: number, sliding: boolean, wallrun: boolean): void {
+  /** `wall` is the wall-run grip, 0..1 (0 = not on a wall): the scrape fades out with it. */
+  update(dt: number, speed: number, grounded: number, sliding: boolean, wall: number): void {
+    const wallrun = wall > 0;
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const air = 1 - grounded;
@@ -104,7 +106,9 @@ export class GameAudio {
     if (!wantScrape && this.scrape) this.stopScrape();
     if (this.scrape) {
       const s = clamp(speed / 10, 0.2, 1);
-      this.scrape.gain.gain.setTargetAtTime((wallrun ? 0.09 : 0.16) * s, t, 0.05);
+      // On the wall the scrape thins out as gravity takes over (the feet are losing purchase).
+      const hold = wallrun ? 0.3 + 0.7 * wall : 1;
+      this.scrape.gain.gain.setTargetAtTime((wallrun ? 0.09 : 0.16) * s * hold, t, 0.05);
       this.scrape.filter.frequency.setTargetAtTime((wallrun ? 900 : 520) * (0.7 + 0.5 * s), t, 0.08);
     }
   }

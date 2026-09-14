@@ -70,26 +70,53 @@ export const PLAYER = {
   slideCooldown: 0.25,
 
   // --- wall-run -----------------------------------------------------------------------
-  /** How far beside the body we look for a wall. */
-  wallProbe: 0.22,
+  // Shape of a run at sprint: the jump's own rise finishes (~0.3 s, ~+1 m, so the wall never
+  // eats your jump), the wall holds you flat for ~0.45 s, then a gentle sag; ~1.4–1.6 s
+  // usable, covering ~12 m. Horizontal speed is held.
+  /** How far beside the body we look for a wall (was 0.22: a 25 cm gap missed the facade); also how far you can peel off before letting go. */
+  wallProbe: 0.3,
+  /** Pressing or looking into the wall pulls you onto it from this far; the gap closes over ~0.1 s. */
+  wallAttract: 0.4,
   /** Minimum speed along the wall to attach. */
   wallMinSpeed: 4.0,
   /** Falling faster than this and you slap the wall instead of running it. */
   wallMaxFall: -7,
-  /** Small upward kick on attach (m/s). */
-  wallKick: 2.2,
-  /** Gravity multiplier at attach, ramping to 1 by `wallGravityRamp` seconds. */
-  wallGravityStart: 0.22,
-  wallGravityRamp: 0.9,
-  wallMaxTime: 1.6,
-  /** Speed lost along the wall per second (m/s²). */
-  wallDrag: 1.0,
-  /** Fraction of upward velocity kept on attach (a fresh jump keeps most of its rise). */
+  /** Without a jump (ran off a ledge) you can still attach while pressing into the wall and falling slower than this. */
+  wallFallAttach: -3,
+  /** Rise on attach is clamped to [kick, maxRise]: at least a hop, never more than a jump's own rise. */
+  wallKick: 2.6,
+  wallMaxRise: 6.5,
+  /** Fraction of upward velocity kept on attach (before the clamp above). */
   wallKeepUp: 0.85,
-  /** Wall-jump: push away from the wall, and vertical as a fraction of a normal jump. */
-  wallJumpPush: 5.2,
+  /** Gravity multiplier while still rising: near full, so a fresh jump tops out in ~0.3 s (+1 m) instead of lobbing 2.5 m. */
+  wallRiseGravity: 0.9,
+  /** Gravity multiplier through the plateau (loses only ~0.6 m/s over it), ramping to 1 over `wallGravityRamp`. */
+  wallGravityStart: 0.06,
+  wallPlateau: 0.45,
+  wallGravityRamp: 0.7,
+  /** Hard cut; the sag has you falling at ~8 m/s by then anyway. */
+  wallMaxTime: 1.7,
+  /** Speed lost along the wall per second (m/s²). Was 1.0: a long run should not bleed speed. */
+  wallDrag: 0.3,
+  /** Speed gained along the wall on attach (m/s), capped at sprint + this. */
+  wallAttachBoost: 0.5,
+  /** Looking away from the wall by more than this (deg) starts peeling the run off toward the look direction... */
+  wallSteerDead: 30,
+  /** ...at up to this many deg/s of velocity turn (reached at `wallLookOff`). */
+  wallSteer: 15,
+  /** Looking away harder than this (deg) for `wallLookOffTime` releases the wall cleanly. */
+  wallLookOff: 70,
+  wallLookOffTime: 0.15,
+  /** Wall-jump: push (m/s) along a blend of away-from-wall and the look direction (`wallJumpLookMix` of look). */
+  wallJumpPush: 6.0,
+  wallJumpLookMix: 0.45,
+  /** Vertical as a fraction of a normal jump. */
   wallJumpUp: 1.0,
-  wallJumpKeep: 0.92,
+  /** Along-wall speed kept when aiming forward; aiming straight away drops it by `wallJumpTurn` so the jump really turns. */
+  wallJumpKeep: 0.95,
+  wallJumpTurn: 0.35,
+  /** Horizontal speed cap after a wall-jump (the along-wall part is trimmed to fit). */
+  wallJumpMaxSpeed: 10.5,
   /** Vertical impulse multiplier per successive wall-jump in one airtime. */
   wallChainDecay: 0.72,
   /** After leaving a wall you cannot re-attach to the same one until grounded. */

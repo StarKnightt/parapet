@@ -31,6 +31,8 @@ const tap = async (code, ms = 60) => {
   await key(code, false);
 };
 const pose = (x, y, z, yaw, pitch = 0) => page.evaluate((p) => window.__parapet.setPose(...p), [x, y, z, yaw, pitch]);
+/** Turn the view mid-motion (mouse look) without the teleport's velocity reset. */
+const look = (yaw, pitch = 0) => page.evaluate((p) => window.__parapet.look(...p), [yaw, pitch]);
 const stats = () => page.evaluate(() => window.__parapet.stats());
 const releaseAll = async () => {
   for (const k of ["KeyW", "KeyA", "KeyS", "KeyD", "ShiftLeft", "Space", "ControlLeft"]) await key(k, false);
@@ -253,8 +255,12 @@ const wrApex = Math.max(...wr.map((s) => s.pos[1])) - 20;
 const airStart = wr.findIndex((s) => !s.grounded);
 const airEnd = airStart >= 0 ? wr.slice(airStart).findIndex((s) => s.grounded) : -1;
 const airTime = airStart >= 0 && airEnd > 0 ? wr[airStart + airEnd].t - wr[airStart].t : 0;
+// Shape: the jump's own rise (~1 m), then the wall holds you flat rather than lobbing you up.
+const wrHold = wrSamples.find((s) => s.t - wrSamples[0].t > 0.8);
+const wrHoldY = wrHold ? wrHold.pos[1] - 20 : 0;
+const wrSpeedLoss = wrSamples.length ? wrSamples[0].speed - wrSamples[wrSamples.length - 1].speed : 99;
 report("wall-run attaches", `${wrSamples.length} samples, ${wrTime.toFixed(2)}s`, "> 0.5 s in wallrun", wrTime > 0.5);
-report("wall-run extends air", `air ${airTime.toFixed(2)}s apex ${wrApex.toFixed(2)}m`, "air > 1.0 s, apex > 1.4 m", airTime > 1.0 && wrApex > 1.4);
+report("wall-run holds height", `air ${airTime.toFixed(2)}s apex ${wrApex.toFixed(2)}m y@0.8s ${wrHoldY.toFixed(2)}m speed -${wrSpeedLoss.toFixed(2)}`, "air > 1.0 s, apex 0.7–1.3 m, still > 0.5 m up at 0.8 s, speed loss < 0.6", airTime > 1.0 && wrApex > 0.7 && wrApex < 1.3 && wrHoldY > 0.5 && wrSpeedLoss < 0.6);
 
 // Wall-jump: attach, then press Space mid-run → pushed off the wall toward -z.
 await pose(-10, 20, 9.55, 90);
@@ -277,6 +283,65 @@ const wjr = await sample(3000, async (s) => {
 await releaseAll();
 const wjEnd = wjr[wjr.length - 1];
 report("wall-jump pushes off", `z=${wjEnd.pos[2].toFixed(2)} x=${wjEnd.pos[0].toFixed(1)}`, "z < 8.6 (started 9.55)", phase === 2 && wjEnd.pos[2] < 8.6);
+
+// Camera-aimed wall-jump: same attach, but look straight away from the wall (yaw 0 = -z)
+// before pressing Space. The kick should turn much harder off the wall than the forward-aimed
+// one above, while still pushing away in both cases.
+await pose(-10, 20, 9.55, 90);
+await sleep(300);
+await key("KeyW", true);
+let aphase = 0;
+let aimVel = null;
+// Velocity on the first sample after the forward-aimed run above left the wall.
+const wjrOn = wjr.findIndex((s) => s.state === "wallrun");
+const fwdVel = wjrOn >= 0 ? (wjr.slice(wjrOn).find((s) => s.state !== "wallrun")?.vel ?? null) : null;
+await sample(3000, async (s) => {
+  if (aphase === 0 && s.pos[0] < -11) {
+    aphase = 1;
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  } else if (aphase === 1 && s.state === "wallrun" && s.wallTime > 0.25) {
+    aphase = 2;
+    await look(0, 0);
+    await key("Space", true);
+    setTimeout(() => key("Space", false), 60);
+  } else if (aphase === 2 && s.state !== "wallrun") {
+    aphase = 3;
+    aimVel = s.vel;
+  } else if (aphase === 3 && (s.grounded || s.pos[1] < 18) && s.t > 0.8) return "stop";
+});
+await releaseAll();
+// Heading off the wall: 0° = along the run (-x), 90° = straight away (-z).
+const heading = (v) => (v ? (Math.atan2(-v[2], -v[0]) * 180) / Math.PI : NaN);
+const hFwd = heading(fwdVel);
+const hAim = heading(aimVel);
+report("wall-jump follows camera", `forward-aimed ${hFwd.toFixed(0)}°, away-aimed ${hAim.toFixed(0)}° (vz ${aimVel ? aimVel[2].toFixed(1) : "-"})`, "away-aimed turns ≥ 12° harder; both push off (vz < -4)", hAim - hFwd >= 12 && aimVel && aimVel[2] < -4 && fwdVel && fwdVel[2] < -4);
+
+// Shallow-angle attach: approach the wall at 20° with a jump before contact (gap ≈ 0.45 m at
+// take-off). Looking into the wall reaches out and pulls you on.
+{
+  const a = 20;
+  const vInto = 8.5 * Math.sin((a * Math.PI) / 180);
+  await pose(-10, 20, 9.65 - (0.5 + 0.45 * vInto), 90 + a);
+  await sleep(300);
+  await key("KeyW", true);
+  let j = false;
+  let left = false;
+  const zJump = 9.65 - 0.15 * vInto - 0.05;
+  const sh = await sample(3000, async (s) => {
+    if (!j && s.pos[2] > zJump) {
+      j = true;
+      await key("Space", true);
+      setTimeout(() => key("Space", false), 60);
+    }
+    if (j && !s.grounded) left = true;
+    if ((left && s.grounded) || s.pos[0] < -19.5) return "stop";
+  });
+  await releaseAll();
+  const shWall = sh.filter((s) => s.state === "wallrun");
+  const shTime = shWall.length ? shWall[shWall.length - 1].t - shWall[0].t : 0;
+  report("shallow-angle attach (20°)", `${shTime.toFixed(2)}s on wall, z=${shWall.length ? shWall[shWall.length - 1].pos[2].toFixed(2) : "-"}`, "> 0.4 s in wallrun, flush at z=9.65", shTime > 0.4 && shWall.length && Math.abs(shWall[shWall.length - 1].pos[2] - 9.65) < 0.02);
+}
 
 // No attach while merely walking beside a wall on the ground.
 await pose(-10, 20, 9.55, 90);

@@ -114,9 +114,12 @@ export class Game {
         this.rig.punchFov(4);
         this.audio.slideStart();
       },
-      // Lean away from the wall while running it.
-      onWallRunStart: (side) => (this.rig.extraRoll = -side * 8 * (Math.PI / 180)),
-      onWallRunEnd: () => (this.rig.extraRoll = 0),
+      // Lean away from the wall while running it; a small FOV kick sells the catch.
+      onWallRunStart: (side) => {
+        this.rig.wallLean(side);
+        this.rig.punchFov(2);
+      },
+      onWallRunEnd: () => this.rig.wallLean(0),
       onWallJump: () => {
         this.rig.punchFov(4);
         this.body.wallJump();
@@ -307,7 +310,7 @@ export class Game {
     this.sky.update(this.elapsed, this.rig.camera.position);
     this.hud.update(dt);
     this.hud.setTimer(this.time, this.timerRunning);
-    this.audio.update(dt, this.player.speed, this.player.grounded ? 1 : 0, this.player.sliding && this.player.grounded, this.player.state === "wallrun");
+    this.audio.update(dt, this.player.speed, this.player.grounded ? 1 : 0, this.player.sliding && this.player.grounded, this.player.wallGrip);
 
     // Finish sequence: hold the slow-mo for a beat, ease time back, then bring the card in.
     if (this.finishT >= 0) {
@@ -363,6 +366,12 @@ export class Game {
     this.player.setPitch(THREE.MathUtils.degToRad(pitchDeg));
   }
 
+  /** Turn the view without touching position or velocity (scripted mouse look). Angles in degrees. */
+  look(yawDeg: number, pitchDeg: number): void {
+    this.player.yaw = THREE.MathUtils.degToRad(yawDeg);
+    this.player.setPitch(THREE.MathUtils.degToRad(pitchDeg));
+  }
+
   key(code: string, down: boolean): void {
     this.input.inject(code, down);
   }
@@ -397,6 +406,9 @@ export class Game {
       grounded: this.player.grounded,
       state: this.player.state,
       height: this.player.height,
+      yaw: THREE.MathUtils.radToDeg(this.player.yaw),
+      wallTime: this.player.wallRunTime,
+      wallSide: this.player.wallSide,
       checkpoint: this.checkpoint,
       time: this.time,
       finished: this.finished,

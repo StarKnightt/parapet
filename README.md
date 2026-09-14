@@ -13,7 +13,7 @@ pnpm build        # static site in dist/
 
 Controls: `WASD` move (running is the default) · `Shift` walk · `Space` jump · `Ctrl`/`C` slide · `M` mute · `R` restart · `F3` debug readout · `1–9` teleport to checkpoints (dev).
 
-Moves: push into a chest-high ledge to mantle; hold slide at speed to drop under pipe racks (slide-jump keeps the speed); jump beside a tall wall while running to wall-run, jump again to kick off it. Hold `Shift` to walk for precision on beams and ledges.
+Moves: push into a chest-high ledge to mantle; hold slide at speed to drop under pipe racks (slide-jump keeps the speed); jump beside a tall wall while running to wall-run (steer or look into the wall to reach it from further out, or to catch it when you run off a ledge), then jump again to kick off it — the kick goes where you look: aim along the route to keep your speed, aim away to turn across a gap; look hard away from the wall to drop off it. Hold `Shift` to walk for precision on beams and ledges.
 
 Off the line is allowed. Neighbour roofs, buttress tops and cantilevers are places to land and
 stand; the only death is the fall (14 m below the lower of your checkpoint and the last surface

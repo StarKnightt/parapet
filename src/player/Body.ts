@@ -29,8 +29,11 @@ const PALM_L = 0.088;
 const VIEW_FLOOR = 0.72;
 /** Hands never come closer to the eye than this along the view axis. */
 const VIEW_NEAR = 0.3;
-/** Wall-run hand: seconds planted before it lifts, lift duration, slap-down duration. */
-const PLANT_HOLD = 0.30;
+/**
+ * Wall-run hand: seconds planted before it lifts (at full grip; shortens to ~0.7× as the grip
+ * fades through the sag so the cadence quickens as the run dies), lift duration, slap duration.
+ */
+const PLANT_HOLD = 0.34;
 const PLANT_LIFT = 0.09;
 const PLANT_SLAP = 0.05;
 /** How far ahead of the shoulder the wall hand plants, and where it has slid back to by the lift. */
@@ -341,7 +344,7 @@ export class Body {
     if (pl.phase === "hold") {
       pl.ahead = damp(pl.ahead, PLANT_BEHIND, 0.16, dt);
       pl.lift = 0;
-      if (pl.t > PLANT_HOLD || player.wallRunTime < 0.02) {
+      if (pl.t > PLANT_HOLD * (0.7 + 0.3 * player.wallGrip) || player.wallRunTime < 0.02) {
         pl.phase = "lift";
         pl.t = 0;
       }

@@ -5,7 +5,7 @@
  * Everything here is cosmetic: the controller never reads the camera.
  */
 import * as THREE from "three";
-import { clamp, damp, DEG, smoothstep } from "../core/math";
+import { clamp, damp, DEG, moveToward, smoothstep } from "../core/math";
 import type { Input } from "../core/Input";
 import { PLAYER } from "./PlayerConfig";
 import type { PlayerController } from "./PlayerController";
@@ -16,6 +16,9 @@ const BOB_AMP_WALK = 0.028;
 const BOB_AMP_SPRINT = 0.045;
 const BOB_SIDE = 0.018;
 const LEAN_DEG = 1.6;
+/** Wall-run: lean away from the wall by this much, eased in and out over `WALL_LEAN_TIME`. */
+const WALL_LEAN_DEG = 8;
+const WALL_LEAN_TIME = 0.12;
 
 export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
@@ -27,8 +30,11 @@ export class CameraRig {
   private roll = 0;
   private slideNod = 0;
   private eyeH: number = PLAYER.eyeHeight;
-  /** External roll request in radians (wall-run sets this). */
-  extraRoll = 0;
+  /** Wall-run lean: side (-1 left wall, +1 right), 0..1 ease, and how firmly the wall holds (scales the lean). */
+  private leanSide = 0;
+  private leanK = 0;
+  private leanOn = false;
+  private leanHold = 1;
   private readonly mouse = { x: 0, y: 0 };
   private readonly tmp = new THREE.Vector3();
   private readonly euler = new THREE.Euler(0, 0, 0, "YXZ");
@@ -62,13 +68,20 @@ export class CameraRig {
     this.stepOffset = 0;
     this.roll = 0;
     this.slideNod = 0;
-    this.extraRoll = 0;
+    this.leanK = 0;
+    this.leanOn = false;
     this.bobAmount = 0;
     this.eyeH = PLAYER.eyeHeight;
   }
 
   stepUp(dy: number): void {
     this.stepOffset -= dy;
+  }
+
+  /** Wall-run started (`side` -1 = wall on the left, +1 = right) or ended (0). */
+  wallLean(side: -1 | 0 | 1): void {
+    if (side !== 0) this.leanSide = side;
+    this.leanOn = side !== 0;
   }
 
   /** Drain mouse into yaw/pitch. Runs once per render frame. */
@@ -100,7 +113,12 @@ export class CameraRig {
     const rx = Math.cos(player.yaw);
     const rz = -Math.sin(player.yaw);
     const lateral = player.vel.x * rx + player.vel.z * rz;
-    const targetRoll = -(lateral / PLAYER.sprintSpeed) * LEAN_DEG * DEG - input.moveX * 0.4 * DEG + this.extraRoll;
+    // Wall lean eases in over WALL_LEAN_TIME rather than snapping, and relaxes a little as
+    // the wall's grip fades through the sag (the ease-out keeps the last grip value).
+    this.leanK = moveToward(this.leanK, this.leanOn ? 1 : 0, dt / WALL_LEAN_TIME);
+    if (this.leanOn) this.leanHold = 0.6 + 0.4 * player.wallGrip;
+    const wallRoll = -this.leanSide * WALL_LEAN_DEG * DEG * smoothstep(this.leanK) * this.leanHold;
+    const targetRoll = -(lateral / PLAYER.sprintSpeed) * LEAN_DEG * DEG - input.moveX * 0.4 * DEG + wallRoll;
     this.roll = damp(this.roll, targetRoll, 0.14, dt);
 
     // Interpolated body position.
