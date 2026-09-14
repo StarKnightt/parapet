@@ -48,8 +48,8 @@ const SPEED_SHADER = {
       } else {
         col = texture2D(tDiffuse, vUv).rgb;
       }
-      // Vignette.
-      float v = 1.0 - uVignette * smoothstep(0.25, 1.0, r * 1.25);
+      // Vignette (scaled down: the sunlit look wants open corners; the hit spike still bites).
+      float v = 1.0 - uVignette * 0.7 * smoothstep(0.3, 1.0, r * 1.25);
       col *= v;
       // Gentle contrast lift around mid-grey (linear space, pre tone map).
       col = (col - 0.18) * 1.1 + 0.18;
@@ -79,7 +79,8 @@ export class Post {
     this.ao = new N8AOPass(scene, camera, size.x, size.y);
     this.ao.configuration.aoRadius = 1.0;
     this.ao.configuration.distanceFalloff = 0.6;
-    this.ao.configuration.intensity = 5.5;
+    // Brighter, sunlit scene: enough to ground the massing, not enough to muddy corners.
+    this.ao.configuration.intensity = 4.0;
     this.ao.configuration.halfRes = true;
     this.ao.configuration.gammaCorrection = false;
     this.ao.configuration.screenSpaceRadius = false;

@@ -4,19 +4,25 @@
  * 1. Analytic exponential height fog (Quilez): density falls off with altitude, so the
  *    street level drowns in near-white haze while tower tops stay crisp. Replaces three's
  *    fog_fragment; scene.fog must still be set so the fog chunks are compiled in.
- * 2. Weathered concrete detail (concrete only): world-space tint noise (olive ↔ tan),
+ * 2. Weathered concrete detail (concrete only): world-space tint noise (warm grey ↔ ochre),
  *    dark panel seams on face-tangent axes, dirt gradient at the foot of each box and drip
  *    darkening under its cap, and stronger staining on horizontal surfaces.
  */
 import * as THREE from "three";
+import { SUN_DIR } from "./Sky";
 
 export const FOG_UNIFORMS = {
-  uFogDensity: { value: 0.2 },
-  uFogFalloff: { value: 0.22 },
+  uFogDensity: { value: 0.13 },
+  uFogFalloff: { value: 0.2 },
   uFogBase: { value: 0.0 },
-  uFogDist: { value: 0.0008 },
-  uFogColor: { value: new THREE.Color(0xd6d5d0) },
-  uFogColorUp: { value: new THREE.Color(0xb9bcbd) },
+  uFogDist: { value: 0.00045 },
+  /** Haze away from the sun: cool blue-grey. */
+  uFogColor: { value: new THREE.Color(0xc3ccd6) },
+  /** Haze toward the sun: warm cream. */
+  uFogColorSun: { value: new THREE.Color(0xf1dcbe) },
+  /** Haze when looking up: sky blue. */
+  uFogColorUp: { value: new THREE.Color(0x9fb8d6) },
+  uSunDir: { value: SUN_DIR },
 };
 
 const VARYINGS_VERT = /* glsl */ `
@@ -35,7 +41,7 @@ const VARYINGS_FRAG = /* glsl */ `
   varying vec2 vBox;
   #endif
   uniform float uFogDensity; uniform float uFogFalloff; uniform float uFogBase; uniform float uFogDist;
-  uniform vec3 uFogColor; uniform vec3 uFogColorUp;
+  uniform vec3 uFogColor; uniform vec3 uFogColorSun; uniform vec3 uFogColorUp; uniform vec3 uSunDir;
 `;
 
 const FOG_VERTEX = /* glsl */ `
@@ -57,7 +63,11 @@ const FOG_FRAGMENT = /* glsl */ `
     float h = (uFogDensity / b) * exp(-(cameraPosition.y - uFogBase) * b) * (1.0 - exp(-dist * ry * b)) / ry;
     float amount = 1.0 - exp(-(h + dist * uFogDist));
     amount = clamp(amount, 0.0, 1.0);
-    vec3 fogCol = mix(uFogColor, uFogColorUp, smoothstep(0.0, 0.5, rd.y));
+    // Aerial perspective: cream toward the sun's azimuth, blue-grey away, sky-blue overhead.
+    vec2 fh = normalize(rd.xz + vec2(1e-4, 0.0));
+    float toSun = pow(max(dot(fh, normalize(uSunDir.xz)), 0.0), 2.5);
+    vec3 fogCol = mix(uFogColor, uFogColorSun, toSun);
+    fogCol = mix(fogCol, uFogColorUp, smoothstep(0.0, 0.5, rd.y));
     gl_FragColor.rgb = mix(gl_FragColor.rgb, fogCol, amount);
   }
 `;
@@ -67,11 +77,11 @@ const CONCRETE_DETAIL = /* glsl */ `
     vec3 n = abs(normalize(vWNormal));
     vec3 p = vWorldPos;
 
-    // Low-frequency world tint: olive-grey ↔ warm tan, breaks up identical faces.
+    // Low-frequency world tint: warm grey ↔ pale ochre, breaks up identical faces.
     float t1 = sin(p.x * 0.11 + p.y * 0.07) * sin(p.z * 0.09 - p.y * 0.05) * 0.5 + 0.5;
     float t2 = sin(p.x * 0.031 + 1.7) * sin(p.z * 0.027 + p.y * 0.02) * 0.5 + 0.5;
-    vec3 olive = vec3(0.78, 0.79, 0.70);
-    vec3 tan_ = vec3(0.97, 0.93, 0.85);
+    vec3 olive = vec3(0.84, 0.82, 0.77);
+    vec3 tan_ = vec3(1.0, 0.95, 0.86);
     vec3 tint = mix(olive, tan_, t1 * 0.6 + t2 * 0.4);
     // Mid-frequency patches (pour differences / damp) for tonal contrast.
     float pour = sin(p.x * 0.53 + p.y * 0.71 + 3.1) * sin(p.z * 0.47 - p.y * 0.38) * sin((p.x + p.z) * 0.29);
@@ -87,7 +97,7 @@ const CONCRETE_DETAIL = /* glsl */ `
     // Second speckle octave.
     #ifdef USE_MAP
     vec3 detail = texture2D(map, vMapUv * 3.7 + 0.31).rgb;
-    diffuseColor.rgb *= mix(vec3(1.0), detail * 1.42, 0.4);
+    diffuseColor.rgb *= mix(vec3(1.0), detail * 1.75, 0.4);
     #endif
 
     // Panel seams on the axes tangent to this face (faint, irregular-ish spacing).
@@ -107,7 +117,7 @@ const CONCRETE_DETAIL = /* glsl */ `
     float foot = smoothstep(0.42, 0.0, vBox.x) * min(vBox.y, 4.0) / 4.0;
     float cap = smoothstep(0.78, 1.0, vBox.x);
     diffuseColor.rgb *= 1.0 - vert * foot * (0.3 + 0.2 * streak);
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.78, 0.82, 0.66), vert * foot * 0.5);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.80, 0.76, 0.68), vert * foot * 0.5);
     diffuseColor.rgb *= 1.0 - vert * cap * (0.12 + 0.28 * streak);
     #else
     diffuseColor.rgb *= 1.0 - vert * streak * 0.12;
@@ -115,12 +125,12 @@ const CONCRETE_DETAIL = /* glsl */ `
     // Mid-wall streaking (lighter).
     diffuseColor.rgb *= 1.0 - vert * streak * 0.1;
 
-    // Horizontal surfaces: heavier, more olive staining, plus puddle-dark patches.
+    // Horizontal surfaces: heavier, dusty-ochre staining, plus darker damp patches.
     float horiz = smoothstep(0.6, 1.0, n.y);
     float stain = sin(p.x * 0.43 + 2.0) * sin(p.z * 0.37) * 0.5 + 0.5;
     float puddle = smoothstep(0.55, 0.9, sin(p.x * 0.21 + 1.0) * sin(p.z * 0.17 + 0.4));
-    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.78, 0.80, 0.68), horiz * (0.15 + 0.3 * stain));
-    diffuseColor.rgb *= 1.0 - horiz * puddle * 0.16;
+    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.84, 0.80, 0.72), horiz * (0.15 + 0.3 * stain));
+    diffuseColor.rgb *= 1.0 - horiz * puddle * 0.13;
   }
 `;
 

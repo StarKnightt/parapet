@@ -52,10 +52,11 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   const img = ctx.createImageData(size, size);
   const d = img.data;
   for (let i = 0; i < size * size; i++) {
-    const g = 164 + (rng() - 0.5) * 18 + (rng() - 0.5) * 8;
-    d[i * 4] = g + 3;
+    // Warm, sun-bleached grey (sRGB ~190) so lit faces read bright under the low sun.
+    const g = 190 + (rng() - 0.5) * 18 + (rng() - 0.5) * 8;
+    d[i * 4] = g + 5;
     d[i * 4 + 1] = g + 2;
-    d[i * 4 + 2] = g - 2;
+    d[i * 4 + 2] = g - 5;
     d[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
@@ -63,7 +64,7 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   for (let i = 0; i < 16000; i++) {
     const light = rng() < 0.42;
     const a = 0.18 + rng() * 0.34;
-    ctx.fillStyle = light ? `rgba(228,224,214,${a})` : `rgba(48,46,40,${a})`;
+    ctx.fillStyle = light ? `rgba(234,226,212,${a})` : `rgba(56,50,42,${a})`;
     const s = 1.2 + rng() * rng() * 2.6;
     ctx.beginPath();
     ctx.ellipse(rng() * size, rng() * size, s, s * (0.6 + rng() * 0.6), rng() * 3, 0, Math.PI * 2);
@@ -132,7 +133,7 @@ function concreteTextures(seed: number): { map: THREE.CanvasTexture; rough: THRE
   const rd = rimg.data;
   for (let i = 0; i < size * size; i++) {
     const base = d[i * 4];
-    const v = 228 + (base - 178) * 0.6 + (rng() - 0.5) * 18;
+    const v = 228 + (base - 204) * 0.6 + (rng() - 0.5) * 18;
     rd[i * 4] = rd[i * 4 + 1] = rd[i * 4 + 2] = v;
     rd[i * 4 + 3] = 255;
   }
@@ -176,8 +177,9 @@ export function createMaterials(): MaterialSet {
   });
   patchMaterial(metal);
 
+  // Safety orange, pushed redder so it still pops against warm sunlit concrete.
   const paint = new THREE.MeshStandardMaterial({
-    color: 0xb87a30,
+    color: 0xd4691c,
     roughness: 0.8,
     metalness: 0,
     envMapIntensity: 0.25,

@@ -16,8 +16,9 @@ export class Lighting {
   private readonly snapped = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
-    // Overcast: a soft, slightly warm key through cloud. Shadows stay but are low-contrast.
-    this.sun = new THREE.DirectionalLight(0xffeedd, 2.0);
+    // Golden hour: a warm low key. Roughly 3:1 lit:shadow on roofs once the sky fill is added,
+    // so the long shadows read without going to mud.
+    this.sun = new THREE.DirectionalLight(0xffdfb4, 6.0);
     this.sun.castShadow = true;
     const s = this.sun.shadow;
     s.mapSize.set(SHADOW_MAP, SHADOW_MAP);
@@ -27,13 +28,15 @@ export class Lighting {
     s.camera.right = SHADOW_HALF;
     s.camera.top = SHADOW_HALF;
     s.camera.bottom = -SHADOW_HALF;
-    s.bias = -0.0006;
-    s.normalBias = 0.06;
+    // 25° sun stretches shadow texels ~2.4× across roofs, so a touch more normal bias.
+    s.bias = -0.0005;
+    s.normalBias = 0.08;
     s.radius = 4;
     scene.add(this.sun);
     scene.add(this.sun.target);
 
-    this.hemi = new THREE.HemisphereLight(0xaab1b8, 0x36342f, 1.4);
+    // Cool sky-blue fill from above, warm bounce from the sunlit concrete below.
+    this.hemi = new THREE.HemisphereLight(0xafbccd, 0x7d6e5b, 2.8);
     scene.add(this.hemi);
 
     // Light-space basis for texel snapping.
