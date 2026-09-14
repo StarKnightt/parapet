@@ -2,6 +2,25 @@
   "name": "parapet",
   "private": true,
   "version": "0.1.0",
+  "description": "First-person rooftop parkour in the browser. Procedural everything, zero external assets.",
+  "homepage": "https://starknightt.github.io/parapet/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/StarKnightt/parapet.git"
+  },
+  "license": "MIT",
+  "author": "Prasenjit Nayak (StarKnightt)",
+  "keywords": [
+    "threejs",
+    "typescript",
+    "vite",
+    "parkour",
+    "first-person",
+    "browser-game",
+    "webgl",
+    "procedural-generation",
+    "game"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",
