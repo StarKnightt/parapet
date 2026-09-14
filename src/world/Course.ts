@@ -17,6 +17,7 @@
  */
 import { createRng } from "../core/math";
 import type { Aabb, Vec3 } from "./CollisionWorld";
+import { buildDressing } from "./Dressing";
 import type { Edge, Kit } from "./Kit";
 
 export interface Checkpoint {
@@ -178,6 +179,10 @@ export function buildCourse(kit: Kit): CourseData {
 
   // Ground: streets far below.
   kit.box([-400, -1, -400], [400, 0, 400], { mat: "dark", collide: false, shadow: false });
+
+  // Posters, mural, billboard, sign, bunting, graffiti, windsock, road paint. Last, so it
+  // never touches the massing RNG above.
+  buildDressing(kit);
 
   return {
     spawn: { pos: [3, A, 0], yaw: EAST },

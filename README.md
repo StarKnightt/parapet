@@ -110,7 +110,7 @@ towers past it](media/03-mantle.webp)
 
 ## What is in it
 
-- About 4,200 lines of hand-written TypeScript across 20 files in `src/`,
+- About 4,800 lines of hand-written TypeScript across 21 files in `src/`,
   comments and blank lines aside, plus the Playwright harness in `tools/`.
 - One course, "the concrete line": six roofs from 20 m down to 13 m across about
   170 m of run, five checkpoints, a finish arch, and a calibration pad off the
@@ -119,6 +119,12 @@ towers past it](media/03-mantle.webp)
 - A box kit that turns those numbers into merged geometry per material and AABB
   colliders in one call, so the whole city is a handful of draw calls and the
   collision world can never disagree with the picture.
+- Ten pieces of set dressing that never touch the collision world: pasted
+  posters and stencilled numbers on the facades you run toward, a flaked
+  geometric mural over roof E, a peeled billboard turned to the start, a
+  skyline sign at the end of the canyon, bunting and service cables across the
+  gaps, three graffiti throw-ups, a windsock on the water tank, and road paint
+  on the street far below. All of it is one extra draw call from one canvas.
 - A locomotion state machine on a fixed step: ground, air, mantle, slide and
   wall-run, with every feel number in one file, `src/player/PlayerConfig.ts`.
 - A first-person body with world-anchored hands: on a mantle they reach, grab
@@ -141,7 +147,11 @@ canvas at boot, grain, blotches and rain streaks, and tiled at 4 m per repeat by
 per-face UV scaling in the kit. Steel gets brushed grain, panel seams with
 rivets, dents and rust drips at a 1.6 m tile; the louvres are a slat pattern.
 Colour variation per building and per prop is a vertex tint on one shared
-material, which is what keeps the draw calls down.
+material, which is what keeps the draw calls down. The set dressing shares one
+1024² paper atlas: a dozen cells of poster, mural, billboard, graffiti, flag
+and road-paint designs, each sun-bleached, grimed, wrinkled (into the bump) and
+torn at the corners with an alpha cut, so every pasted sheet in the city is a
+quad picking a UV rect from the same material.
 
 **Sky and light.** A late-afternoon shader sky with a low sun disc, corona and
 forward-scatter glow, a drifting cumulus deck whose sun-facing edges go cream

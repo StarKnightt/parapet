@@ -12,7 +12,10 @@ import * as THREE from "three";
 import { createRng } from "../core/math";
 import { patchMaterial } from "./shaderPatches";
 
-export type MaterialKey = "concrete" | "glass" | "metal" | "paint" | "dark" | "lamp";
+export type MaterialKey = "concrete" | "glass" | "metal" | "paint" | "dark" | "lamp" | "poster";
+
+/** Atlas rectangle in UV space: [u0, v0, u1, v1]. */
+export type Rect = [number, number, number, number];
 
 export interface MaterialSet {
   concrete: THREE.MeshStandardMaterial;
@@ -22,6 +25,12 @@ export interface MaterialSet {
   dark: THREE.MeshStandardMaterial;
   /** Warm emissive: the tungsten glow inside doorways and recesses. */
   lamp: THREE.MeshStandardMaterial;
+  /**
+   * Set dressing: one atlas of pasted paper — posters, a mural, a billboard sheet, graffiti,
+   * flags, a windsock, road paint. Alpha-tested so torn corners and flaked paint show the
+   * wall behind. Pieces pick a `POSTER_SHEETS` rect.
+   */
+  poster: THREE.MeshStandardMaterial;
   /** World metres covered by one concrete texture repeat. */
   concreteTile: number;
   /** World metres per sheet-metal repeat (two panel bays with seams + rivets). */
@@ -439,10 +448,436 @@ function slatTextures(seed: number): { map: THREE.CanvasTexture; rough: THREE.Ca
   return { map, rough: greyTexture(r.canvas), bump: greyTexture(b.canvas) };
 }
 
+// ---------------------------------------------------------------- poster atlas
+
+const ATLAS = 1024;
+
+/** Pixel cells of the poster atlas. Names are what the piece is, not what it says. */
+const CELLS = {
+  line4: { x: 0, y: 0, w: 256, h: 384 },
+  circle: { x: 256, y: 0, w: 256, h: 384 },
+  seven: { x: 512, y: 0, w: 256, h: 384 },
+  exit: { x: 768, y: 0, w: 256, h: 384 },
+  mural: { x: 0, y: 384, w: 448, h: 384 },
+  board: { x: 448, y: 384, w: 448, h: 256 },
+  twelve: { x: 896, y: 384, w: 128, h: 192 },
+  tagA: { x: 896, y: 576, w: 128, h: 96 },
+  tagB: { x: 896, y: 672, w: 128, h: 96 },
+  tagC: { x: 448, y: 640, w: 192, h: 128 },
+  plain: { x: 640, y: 640, w: 128, h: 128 },
+  sock: { x: 768, y: 640, w: 128, h: 128 },
+  bands: { x: 0, y: 768, w: 256, h: 256 },
+  flag: { x: 256, y: 768, w: 128, h: 192 },
+} as const;
+
+export type SheetName = keyof typeof CELLS;
+
+type Cell = { x: number; y: number; w: number; h: number };
+
+/** UV rects for each atlas cell, inset 3 px so filtering never bleeds a neighbour in. */
+export const POSTER_SHEETS: Record<SheetName, Rect> = Object.fromEntries(
+  (Object.entries(CELLS) as [SheetName, Cell][]).map(([k, c]) => {
+    const p = 3;
+    return [k, [(c.x + p) / ATLAS, 1 - (c.y + c.h - p) / ATLAS, (c.x + c.w - p) / ATLAS, 1 - (c.y + p) / ATLAS]];
+  }),
+) as Record<SheetName, Rect>;
+
+const hex = (c: number, a = 1): string => `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},${a})`;
+
+/**
+ * Paper, paint and weather for the set dressing. Every cell is drawn opaque then aged in
+ * place: sun-bleach, grime streaks, water stains, paper grain, and torn or flaked areas
+ * erased to alpha so the wall shows through them. Nothing here names a brand; the words
+ * are the kind of wayfinding stencils a service roof would carry.
+ */
+function posterTextures(seed: number): { map: THREE.CanvasTexture; bump: THREE.CanvasTexture } {
+  const rng = createRng(seed);
+  const { canvas, ctx } = makeCanvas(ATLAS);
+  const B = 512;
+  const b = makeCanvas(B);
+  b.ctx.fillStyle = "rgb(128,128,128)";
+  b.ctx.fillRect(0, 0, B, B);
+  const bs = B / ATLAS;
+
+  const font = (px: number, weight = "900"): string => `${weight} ${px}px Impact, "Arial Black", "Helvetica Neue", Arial, sans-serif`;
+
+  /** Draw with the clip set to the cell, then restore. */
+  const inCell = (c: Cell, f: (x: number, y: number, w: number, h: number) => void) => {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(c.x, c.y, c.w, c.h);
+    ctx.clip();
+    f(c.x, c.y, c.w, c.h);
+    ctx.restore();
+  };
+
+  /** Bold centred word, auto-fitted to `maxW`, optional stencil bridges across the glyphs. */
+  const word = (c: Cell, text: string, cy: number, px: number, color: string, opts: { maxW?: number; stencil?: string; italic?: boolean } = {}) => {
+    inCell(c, (x, y, w) => {
+      ctx.fillStyle = color;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = (opts.italic ? "italic " : "") + font(px);
+      const maxW = opts.maxW ?? w * 0.86;
+      const m = ctx.measureText(text).width;
+      if (m > maxW) ctx.font = (opts.italic ? "italic " : "") + font(Math.floor((px * maxW) / m));
+      ctx.fillText(text, x + w / 2, y + cy);
+      if (opts.stencil) {
+        // Stencil bridges: thin bars of the field colour across the letters.
+        ctx.fillStyle = opts.stencil;
+        for (const f of [-0.26, 0.04, 0.3]) ctx.fillRect(x, y + cy + f * px, w, Math.max(3, px * 0.022));
+      }
+    });
+  };
+
+  /** Age a cell: bleach, grain, streaks, a stain, and tears/flakes erased to alpha. */
+  const weather = (c: Cell, o: { bleach?: number; grime?: number; tears?: number; flakes?: number; nicks?: number; wrinkles?: number } = {}) => {
+    const { x, y, w, h } = c;
+    inCell(c, () => {
+      ctx.globalCompositeOperation = "source-atop";
+      // Sun-bleach: a warm cream veil, stronger toward the top.
+      const g = ctx.createLinearGradient(0, y, 0, y + h);
+      g.addColorStop(0, `rgba(244,236,220,${(o.bleach ?? 0.3) * 1.1})`);
+      g.addColorStop(1, `rgba(244,236,220,${(o.bleach ?? 0.3) * 0.5})`);
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+      // Paper grain.
+      for (let i = 0; i < (w * h) / 60; i++) {
+        const a = 0.05 + rng() * 0.12;
+        ctx.fillStyle = rng() < 0.5 ? `rgba(255,250,240,${a})` : `rgba(40,35,30,${a})`;
+        ctx.fillRect(x + rng() * w, y + rng() * h, 1 + rng() * 1.5, 1 + rng() * 1.5);
+      }
+      // Grime streaks running down from the top edge.
+      const grime = o.grime ?? 0.12;
+      for (let i = 0; i < w / 18; i++) {
+        const sx = x + rng() * w;
+        const len = h * (0.2 + rng() * 0.7);
+        const sg = ctx.createLinearGradient(0, y, 0, y + len);
+        sg.addColorStop(0, `rgba(50,44,38,${grime * (0.6 + rng() * 0.8)})`);
+        sg.addColorStop(1, "rgba(50,44,38,0)");
+        ctx.fillStyle = sg;
+        ctx.fillRect(sx, y, 1.5 + rng() * 4, len);
+      }
+      // Water stain low on the sheet and a dirt line along the bottom.
+      blotch(ctx, ATLAS, x + w * (0.2 + rng() * 0.6), y + h * (0.75 + rng() * 0.2), w * 0.35, `rgba(90,70,50,${grime * 1.4})`);
+      const bg = ctx.createLinearGradient(0, y + h * 0.86, 0, y + h);
+      bg.addColorStop(0, "rgba(60,50,40,0)");
+      bg.addColorStop(1, `rgba(60,50,40,${grime * 1.6})`);
+      ctx.fillStyle = bg;
+      ctx.fillRect(x, y + h * 0.86, w, h * 0.14);
+      // Tears: a jagged bite out of one or two corners; nicks along the edges.
+      ctx.globalCompositeOperation = "destination-out";
+      const tears = o.tears ?? 1;
+      const corners: [number, number][] = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]];
+      for (let t = 0; t < tears; t++) {
+        const [cx, cy] = corners.splice(Math.floor(rng() * corners.length), 1)[0];
+        const dx = cx === x ? 1 : -1;
+        const dy = cy === y ? 1 : -1;
+        const rw = w * (0.12 + rng() * 0.22);
+        const rh = h * (0.08 + rng() * 0.16);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + dx * rw, cy);
+        const n = 4 + Math.floor(rng() * 4);
+        for (let i = 1; i < n; i++) {
+          const f = i / n;
+          ctx.lineTo(cx + dx * rw * (1 - f) * (0.7 + rng() * 0.6), cy + dy * rh * f * (0.7 + rng() * 0.6));
+        }
+        ctx.lineTo(cx, cy + dy * rh);
+        ctx.closePath();
+        ctx.fill();
+      }
+      for (let i = 0; i < (o.nicks ?? 6); i++) {
+        const side = Math.floor(rng() * 4);
+        const px = side < 2 ? x + rng() * w : side === 2 ? x : x + w;
+        const py = side >= 2 ? y + rng() * h : side === 0 ? y : y + h;
+        ctx.beginPath();
+        ctx.ellipse(px, py, 2 + rng() * 8, 2 + rng() * 5, rng() * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Flaked paint: soft blotches erased to alpha (alpha-test turns them into hard flakes).
+      for (let i = 0; i < (o.flakes ?? 0); i++) {
+        const r = 4 + rng() * rng() * Math.min(w, h) * 0.14;
+        blotch(ctx, ATLAS, x + rng() * w, y + rng() * h, r, `rgba(0,0,0,${0.55 + rng() * 0.45})`);
+      }
+      ctx.globalCompositeOperation = "source-over";
+    });
+    // Bump: paste-up wrinkles (soft light/dark ridges) and a little paper grain.
+    const bc = b.ctx;
+    bc.save();
+    bc.beginPath();
+    bc.rect(x * bs, y * bs, w * bs, h * bs);
+    bc.clip();
+    for (let i = 0; i < (o.wrinkles ?? 6); i++) {
+      const x0 = (x + rng() * w) * bs;
+      const y0 = (y + rng() * h) * bs;
+      const len = (0.2 + rng() * 0.5) * Math.max(w, h) * bs;
+      const ang = rng() * Math.PI;
+      const bow = (rng() - 0.5) * len * 0.6;
+      const x1 = x0 + Math.cos(ang) * len;
+      const y1 = y0 + Math.sin(ang) * len;
+      const cx = (x0 + x1) / 2 - Math.sin(ang) * bow;
+      const cy = (y0 + y1) / 2 + Math.cos(ang) * bow;
+      for (const [off, col, lw] of [[1.6, "rgba(200,200,200,0.7)", 2.2], [-1.6, "rgba(60,60,60,0.7)", 2.2]] as [number, string, number][]) {
+        bc.strokeStyle = col;
+        bc.lineWidth = lw;
+        bc.beginPath();
+        bc.moveTo(x0 - Math.sin(ang) * off, y0 + Math.cos(ang) * off);
+        bc.quadraticCurveTo(cx - Math.sin(ang) * off, cy + Math.cos(ang) * off, x1 - Math.sin(ang) * off, y1 + Math.cos(ang) * off);
+        bc.stroke();
+      }
+    }
+    for (let i = 0; i < (w * h * bs * bs) / 40; i++) {
+      bc.fillStyle = rng() < 0.5 ? "rgba(160,160,160,0.5)" : "rgba(96,96,96,0.5)";
+      bc.fillRect(x * bs + rng() * w * bs, y * bs + rng() * h * bs, 1, 1);
+    }
+    bc.restore();
+  };
+
+  const field = (c: Cell, color: number) => {
+    ctx.fillStyle = hex(color);
+    ctx.fillRect(c.x, c.y, c.w, c.h);
+  };
+  /** Thin border in a colour, inset a little: the printed margin of a sheet. */
+  const margin = (c: Cell, color: string, inset = 10, lw = 3) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.strokeRect(c.x + inset, c.y + inset, c.w - inset * 2, c.h - inset * 2);
+  };
+
+  // --- "LINE 4": mustard field, a huge black 4, a small caption. Transit-style.
+  {
+    const c = CELLS.line4;
+    field(c, 0xc4a04a);
+    margin(c, "rgba(40,34,28,0.7)");
+    word(c, "4", c.h * 0.44, 300, "rgb(38,34,30)");
+    word(c, "LINE", c.h * 0.83, 64, "rgb(38,34,30)", { maxW: c.w * 0.7 });
+    ctx.fillStyle = "rgb(38,34,30)";
+    ctx.fillRect(c.x + 28, c.y + c.h * 0.72, c.w - 56, 5);
+    weather(c, { bleach: 0.32, tears: 2, flakes: 3 });
+  }
+  // --- Circle mark: off-white field, one dusty-blue disc with a cream ring, a small "07".
+  {
+    const c = CELLS.circle;
+    field(c, 0xe1d9c8);
+    ctx.fillStyle = hex(0x4c6479);
+    ctx.beginPath();
+    ctx.arc(c.x + c.w / 2, c.y + c.h * 0.42, c.w * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = hex(0xe1d9c8);
+    ctx.lineWidth = 9;
+    ctx.beginPath();
+    ctx.arc(c.x + c.w / 2, c.y + c.h * 0.42, c.w * 0.24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = hex(0x4c6479);
+    ctx.fillRect(c.x + 24, c.y + c.h * 0.8, c.w - 48, 8);
+    word(c, "07", c.h * 0.9, 44, hex(0x4c6479));
+    weather(c, { bleach: 0.2, tears: 1, flakes: 2 });
+  }
+  // --- Stencilled 7: teal field, cream numeral with stencil bridges, "SECTOR" under it.
+  {
+    const c = CELLS.seven;
+    field(c, 0x3c6466);
+    word(c, "7", c.h * 0.42, 320, hex(0xe6dcc6), { stencil: hex(0x3c6466) });
+    word(c, "SECTOR", c.h * 0.84, 60, hex(0xe6dcc6), { maxW: c.w * 0.72 });
+    weather(c, { bleach: 0.34, grime: 0.16, tears: 2, flakes: 4 });
+  }
+  // --- EXIT: cream field, deep maroon word turned on its side (a tall sheet with a wide word).
+  {
+    const c = CELLS.exit;
+    field(c, 0xded5c2);
+    margin(c, hex(0x7a3a36, 0.8), 12, 4);
+    ctx.save();
+    ctx.translate(c.x + c.w / 2, c.y + c.h / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = hex(0x7a3a36);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = font(150);
+    ctx.fillText("EXIT", 0, 0);
+    ctx.restore();
+    // Arrow bar along the bottom.
+    ctx.fillStyle = hex(0x7a3a36);
+    ctx.fillRect(c.x + 30, c.y + c.h - 40, c.w - 60, 10);
+    ctx.beginPath();
+    ctx.moveTo(c.x + c.w - 24, c.y + c.h - 35);
+    ctx.lineTo(c.x + c.w - 50, c.y + c.h - 52);
+    ctx.lineTo(c.x + c.w - 50, c.y + c.h - 18);
+    ctx.closePath();
+    ctx.fill();
+    weather(c, { bleach: 0.24, tears: 1, flakes: 2 });
+  }
+  // --- Mural: painted straight onto the concrete (no field — the wall shows between the
+  //     shapes): three ochre bands, a big dusty-blue disc with a cream core, a small disc low
+  //     left. Flaked so the concrete behind shows through the paint in patches.
+  {
+    const c = CELLS.mural;
+    ctx.fillStyle = hex(0x8e6a3e);
+    for (const f of [0.1, 0.4, 0.7]) ctx.fillRect(c.x, c.y + c.h * f, c.w, c.h * 0.1);
+    ctx.fillStyle = hex(0x4a6480);
+    ctx.beginPath();
+    ctx.arc(c.x + c.w * 0.64, c.y + c.h * 0.5, c.h * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = hex(0xd9d0be);
+    ctx.beginPath();
+    ctx.arc(c.x + c.w * 0.64, c.y + c.h * 0.5, c.h * 0.13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = hex(0x4a6480);
+    ctx.beginPath();
+    ctx.arc(c.x + c.w * 0.2, c.y + c.h * 0.78, c.h * 0.12, 0, Math.PI * 2);
+    ctx.fill();
+    weather(c, { bleach: 0.22, grime: 0.16, tears: 0, nicks: 0, flakes: 60, wrinkles: 0 });
+    // Extra erosion along the bottom: paint fails first where the water sits.
+    inCell(c, (x, y, w, h) => {
+      ctx.globalCompositeOperation = "destination-out";
+      for (let i = 0; i < 40; i++) blotch(ctx, ATLAS, x + rng() * w, y + h * (0.8 + rng() * 0.25), 8 + rng() * 22, `rgba(0,0,0,${0.6 + rng() * 0.4})`);
+      ctx.globalCompositeOperation = "source-over";
+    });
+  }
+  // --- Billboard sheet: cream, one broad diagonal band and a bar of nonsense small print,
+  //     the lower corner peeled away.
+  {
+    const c = CELLS.board;
+    field(c, 0xd8cfbc);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(c.x, c.y, c.w, c.h);
+    ctx.clip();
+    ctx.fillStyle = hex(0x4f6b6a);
+    ctx.beginPath();
+    ctx.moveTo(c.x + c.w * 0.05, c.y + c.h);
+    ctx.lineTo(c.x + c.w * 0.5, c.y);
+    ctx.lineTo(c.x + c.w * 0.72, c.y);
+    ctx.lineTo(c.x + c.w * 0.27, c.y + c.h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = hex(0x3a3532);
+    for (let i = 0; i < 5; i++) ctx.fillRect(c.x + c.w * 0.72, c.y + c.h * (0.62 + i * 0.05), c.w * (0.12 + rng() * 0.1), 4);
+    inCell(c, (x, y, w, h) => {
+      ctx.fillStyle = hex(0x3a3532);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = font(64);
+      ctx.fillText("NORD", x + w * 0.84, y + h * 0.36);
+    });
+    weather(c, { bleach: 0.4, grime: 0.14, tears: 1, nicks: 10, flakes: 6 });
+    inCell(c, (x, y, w, h) => {
+      // Peel: a wide curl torn off the lower right, with a shadow lip where the paper lifts.
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.moveTo(x + w, y + h * 0.55);
+      ctx.lineTo(x + w * 0.9, y + h * 0.7);
+      ctx.lineTo(x + w * 0.78, y + h * 0.66);
+      ctx.lineTo(x + w * 0.66, y + h * 0.86);
+      ctx.lineTo(x + w * 0.6, y + h);
+      ctx.lineTo(x + w, y + h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalCompositeOperation = "source-atop";
+      ctx.strokeStyle = "rgba(40,32,26,0.45)";
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(x + w, y + h * 0.55);
+      ctx.lineTo(x + w * 0.9, y + h * 0.7);
+      ctx.lineTo(x + w * 0.78, y + h * 0.66);
+      ctx.lineTo(x + w * 0.66, y + h * 0.86);
+      ctx.lineTo(x + w * 0.6, y + h);
+      ctx.stroke();
+      ctx.globalCompositeOperation = "source-over";
+    });
+  }
+  // --- Stencilled 12: faded maroon field, cream numeral.
+  {
+    const c = CELLS.twelve;
+    field(c, 0x6e3336);
+    word(c, "12", c.h * 0.46, 120, hex(0xe6dcc6), { stencil: hex(0x6e3336) });
+    ctx.fillStyle = hex(0xe6dcc6);
+    ctx.fillRect(c.x + 14, c.y + c.h * 0.8, c.w - 28, 4);
+    weather(c, { bleach: 0.3, tears: 1, flakes: 2 });
+  }
+  // --- Graffiti throw-ups: one colour each, fat italic letters with an outline and drips.
+  const tag = (c: Cell, text: string, color: number, outline: number, rot: number) => {
+    inCell(c, (x, y, w, h) => {
+      ctx.save();
+      ctx.translate(x + w / 2, y + h / 2);
+      ctx.rotate(rot);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "italic " + font(Math.floor(h * 0.8));
+      const m = ctx.measureText(text).width;
+      if (m > w * 0.85) ctx.font = "italic " + font(Math.floor((h * 0.8 * w * 0.85) / m));
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = hex(outline, 0.95);
+      ctx.lineWidth = h * 0.16;
+      ctx.strokeText(text, 0, 2);
+      ctx.fillStyle = hex(color, 0.92);
+      ctx.fillText(text, 0, 0);
+      ctx.restore();
+      // Drips from the bottom of the letters.
+      ctx.fillStyle = hex(color, 0.8);
+      for (let i = 0; i < 4; i++) {
+        const dx = x + w * (0.25 + rng() * 0.5);
+        ctx.fillRect(dx, y + h * 0.6, 2 + rng() * 2, h * (0.15 + rng() * 0.3));
+      }
+    });
+  };
+  tag(CELLS.tagA, "NUL", 0xe8e0d0, 0x2a2624, -0.08);
+  tag(CELLS.tagB, "KAF", 0xd8cfbc, 0x4b3a36, 0.06);
+  tag(CELLS.tagC, "OY", 0x4f7d7c, 0x1f2f2f, -0.05);
+  for (const c of [CELLS.tagA, CELLS.tagB, CELLS.tagC]) weather(c, { bleach: 0.15, grime: 0.06, tears: 0, nicks: 0, flakes: 3, wrinkles: 0 });
+  // --- Plain sheet (tinted per use: road paint, flags' base), flag, windsock bands.
+  field(CELLS.plain, 0xe8e2d6);
+  weather(CELLS.plain, { bleach: 0.1, grime: 0.18, tears: 0, nicks: 0, flakes: 12, wrinkles: 2 });
+  field(CELLS.flag, 0xe4dccc);
+  weather(CELLS.flag, { bleach: 0.2, grime: 0.12, tears: 2, nicks: 12, flakes: 0, wrinkles: 3 });
+  {
+    const c = CELLS.sock;
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = hex(i % 2 ? 0xe4dccc : 0x9a4038);
+      ctx.fillRect(c.x, c.y + (c.h * i) / 4, c.w, c.h / 4 + 1);
+    }
+    weather(c, { bleach: 0.3, grime: 0.1, tears: 0, nicks: 0, flakes: 0, wrinkles: 2 });
+  }
+  // --- Bands: square sheet, diagonal teal/cream stripes — an abstract mark, nothing to read.
+  {
+    const c = CELLS.bands;
+    field(c, 0xd9d0be);
+    inCell(c, (x, y, w, h) => {
+      ctx.fillStyle = hex(0x4f6b6a);
+      for (let i = -3; i < 8; i++) {
+        const o = i * 44;
+        ctx.beginPath();
+        ctx.moveTo(x + o, y);
+        ctx.lineTo(x + o + 22, y);
+        ctx.lineTo(x + o + 22 + h, y + h);
+        ctx.lineTo(x + o + h, y + h);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = hex(0xd9d0be);
+      ctx.beginPath();
+      ctx.arc(x + w * 0.5, y + h * 0.5, w * 0.17, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    weather(c, { bleach: 0.28, tears: 2, flakes: 3 });
+  }
+
+  const map = new THREE.CanvasTexture(canvas);
+  map.wrapS = map.wrapT = THREE.ClampToEdgeWrapping;
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 8;
+  const bump = new THREE.CanvasTexture(b.canvas);
+  bump.wrapS = bump.wrapT = THREE.ClampToEdgeWrapping;
+  bump.anisotropy = 4;
+  return { map, bump };
+}
+
 export function createMaterials(): MaterialSet {
   const { map, rough } = concreteTextures(7);
   const steel = metalTextures(19);
   const slat = slatTextures(23);
+  const paper = posterTextures(31);
 
   const concrete = new THREE.MeshStandardMaterial({
     map,
@@ -520,5 +955,20 @@ export function createMaterials(): MaterialSet {
   });
   patchMaterial(lamp);
 
-  return { concrete, glass, metal, paint, dark, lamp, concreteTile: 3, metalTile: 1.6, darkTile: 0.64 };
+  // Pasted paper and paint. Alpha-tested (no sorting, no blending) so torn corners and flaked
+  // patches are real holes; double-sided for flags and the windsock; tinted per piece.
+  const poster = new THREE.MeshStandardMaterial({
+    map: paper.map,
+    bumpMap: paper.bump,
+    bumpScale: 0.12,
+    roughness: 0.92,
+    metalness: 0,
+    envMapIntensity: 0.15,
+    vertexColors: true,
+    alphaTest: 0.5,
+    side: THREE.DoubleSide,
+  });
+  patchMaterial(poster);
+
+  return { concrete, glass, metal, paint, dark, lamp, poster, concreteTile: 3, metalTile: 1.6, darkTile: 0.64 };
 }

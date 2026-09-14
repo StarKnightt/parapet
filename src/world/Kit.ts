@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { createRng } from "../core/math";
 import type { CollisionWorld, Surface, Vec3 } from "./CollisionWorld";
-import { tileFor, type MaterialKey, type MaterialSet } from "./materials";
+import { tileFor, type MaterialKey, type MaterialSet, type Rect } from "./materials";
 
 export interface BoxOpts {
   mat?: MaterialKey;
@@ -74,6 +74,22 @@ export interface TowerOpts {
 }
 
 const MAX_LIGHTS = 14;
+
+/**
+ * Sign glyphs on a 5×7 cell grid: stroke centre-lines [u0, v0, u1, v1], one cell wide.
+ * Axis-aligned strokes get square caps; diagonals are trimmed so they stay inside the box.
+ */
+const GLYPHS: Record<string, [number, number, number, number][]> = {
+  N: [[0.5, 0.5, 0.5, 6.5], [4.5, 0.5, 4.5, 6.5], [0.9, 6.1, 4.1, 0.9]],
+  O: [[0.5, 0.5, 0.5, 6.5], [4.5, 0.5, 4.5, 6.5], [0.5, 6.5, 4.5, 6.5], [0.5, 0.5, 4.5, 0.5]],
+  R: [[0.5, 0.5, 0.5, 6.5], [0.5, 6.5, 4.5, 6.5], [4.5, 3.5, 4.5, 6.5], [0.5, 3.5, 4.5, 3.5], [1.7, 3.0, 4.3, 0.7]],
+  D: [[0.5, 0.5, 0.5, 6.5], [0.5, 6.5, 3.3, 6.5], [0.5, 0.5, 3.3, 0.5], [4.5, 1.6, 4.5, 5.4], [3.5, 6.4, 4.4, 5.5], [3.5, 0.6, 4.4, 1.5]],
+  E: [[0.5, 0.5, 0.5, 6.5], [0.5, 6.5, 4.5, 6.5], [0.5, 3.5, 3.8, 3.5], [0.5, 0.5, 4.5, 0.5]],
+  I: [[2.5, 0.5, 2.5, 6.5]],
+  L: [[0.5, 0.5, 0.5, 6.5], [0.5, 0.5, 4.5, 0.5]],
+  T: [[0.5, 6.5, 4.5, 6.5], [2.5, 0.5, 2.5, 6.5]],
+  X: [[0.9, 0.9, 4.1, 6.1], [0.9, 6.1, 4.1, 0.9]],
+};
 
 const PALETTE = [0xcec5b7, 0xbfb5a6, 0xd6ccbd, 0xb3aca1, 0xc7bdb0, 0xd0c5b2];
 const ROOF_TINT = 0xd4cbbd;
@@ -597,6 +613,160 @@ export class Kit {
   /** Convenience: centre-x, base-y, centre-z with size. */
   boxAt(cx: number, y0: number, cz: number, w: number, h: number, d: number, opts: BoxOpts = {}): void {
     this.box([cx - w / 2, y0, cz - d / 2], [cx + w / 2, y0 + h, cz + d / 2], opts);
+  }
+
+  // ---------------------------------------------------------------- set dressing
+
+  /** Per-face UV scaling for a box of (w, h, d), same rule as `box()`. */
+  private tileBoxUVs(geo: THREE.BufferGeometry, w: number, h: number, d: number, mat: MaterialKey): void {
+    const tile = tileFor(this.mats, mat);
+    const uv = geo.attributes.uv as THREE.BufferAttribute;
+    const dims: [number, number][] = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+    const o = this.uvRng();
+    for (let f = 0; f < 6; f++) {
+      const [du, dv] = dims[f];
+      for (let v = 0; v < 4; v++) {
+        const i = f * 4 + v;
+        uv.setXY(i, (uv.getX(i) * du) / tile + o, (uv.getY(i) * dv) / tile + o);
+      }
+    }
+  }
+
+  private commitBounded(geo: THREE.BufferGeometry, mat: MaterialKey, opts: BoxOpts): void {
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox!;
+    this.commit(geo, mat, opts.tint ?? 0xffffff, opts.shadow === true, bb.min.y, Math.max(bb.max.y - bb.min.y, 0.02));
+  }
+
+  /** Right-handed frame whose local +x is `u` (horizontal), +y is up, +z faces `n = u × up`. */
+  private static frame(u: Vec3): THREE.Matrix4 {
+    const U = new THREE.Vector3(u[0], 0, u[2]).normalize();
+    const V = new THREE.Vector3(0, 1, 0);
+    const N = new THREE.Vector3().crossVectors(U, V);
+    return new THREE.Matrix4().makeBasis(U, V, N);
+  }
+
+  private static outOf(face: Edge): Vec3 {
+    return face === "e" ? [1, 0, 0] : face === "w" ? [-1, 0, 0] : face === "s" ? [0, 0, 1] : [0, 0, -1];
+  }
+
+  /**
+   * Box of `size` centred at `c`, rotated by `euler` (radians; yaw about y applied last, so a
+   * tilt about x stays the box's own tilt). Visual only, shadows off unless asked: frames,
+   * masts, sign strokes and other dressing.
+   */
+  prism(c: Vec3, size: Vec3, euler: Vec3 = [0, 0, 0], opts: BoxOpts = {}): void {
+    const mat = opts.mat ?? "dark";
+    const geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
+    this.tileBoxUVs(geo, size[0], size[1], size[2], mat);
+    geo.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(euler[0], euler[1], euler[2], "YXZ")));
+    geo.translate(c[0], c[1], c[2]);
+    this.commitBounded(geo, mat, opts);
+  }
+
+  /**
+   * Flat sheet (poster, flag, panel) of w×h centred at `c` whose front faces the horizontal
+   * `normal` (an Edge or a direction), rolled `roll` radians about that normal, textured with
+   * the atlas `rect` [u0, v0, u1, v1]. Visual only, no shadow.
+   */
+  sheet(c: Vec3, w: number, h: number, normal: Edge | Vec3, rect: Rect, opts: { tint?: number; roll?: number; mat?: MaterialKey } = {}): void {
+    const mat = opts.mat ?? "poster";
+    const n = typeof normal === "string" ? Kit.outOf(normal) : normal;
+    const geo = new THREE.PlaneGeometry(w, h);
+    const uv = geo.attributes.uv as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, rect[0] + uv.getX(i) * (rect[2] - rect[0]), rect[1] + uv.getY(i) * (rect[3] - rect[1]));
+    if (opts.roll) geo.rotateZ(opts.roll);
+    // PlaneGeometry faces +z; a frame whose +z is `n` has +x = up × n. A sheet lying flat
+    // (normal up) keeps its width along world x and its height along −z.
+    const N = new THREE.Vector3(n[0], n[1], n[2]).normalize();
+    const V = Math.abs(N.y) > 0.99 ? new THREE.Vector3(0, 0, -N.y) : new THREE.Vector3(0, 1, 0);
+    const U = new THREE.Vector3().crossVectors(V, N);
+    geo.applyMatrix4(new THREE.Matrix4().makeBasis(U, V, N));
+    geo.translate(c[0], c[1], c[2]);
+    this.commitBounded(geo, mat, { tint: opts.tint, shadow: false });
+  }
+
+  /**
+   * Poster pasted `proud` metres off a facade: `u` is the centre along the face (world x for
+   * n/s faces, world z for e/w), `y0` the bottom edge.
+   */
+  poster(face: Edge, faceCoord: number, u: number, y0: number, w: number, h: number, rect: Rect, opts: { tint?: number; roll?: number; proud?: number } = {}): void {
+    const out = Kit.outOf(face);
+    const p = opts.proud ?? 0.02;
+    const c: Vec3 = face === "e" || face === "w" ? [faceCoord + out[0] * p, y0 + h / 2, u] : [u, y0 + h / 2, faceCoord + out[2] * p];
+    this.sheet(c, w, h, face, rect, { tint: opts.tint, roll: opts.roll });
+  }
+
+  /**
+   * Tapered tube from `a` (radius `r0`) to `b` (radius `r1`). Side UVs wrap the material tile
+   * round the drum, or map the atlas `rect` (u round, v along) when given. Visual only.
+   */
+  tube(a: Vec3, b: Vec3, r0: number, r1: number, opts: BoxOpts & { segments?: number; open?: boolean; rect?: Rect } = {}): void {
+    const dir = new THREE.Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const len = dir.length();
+    if (len <= 1e-4) return;
+    const mat = opts.mat ?? "dark";
+    const seg = opts.segments ?? 8;
+    const geo = new THREE.CylinderGeometry(r1, r0, len, seg, 1, opts.open ?? true);
+    const uv = geo.attributes.uv as THREE.BufferAttribute;
+    if (opts.rect) {
+      const [u0, v0, u1, v1] = opts.rect;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0));
+    } else {
+      const tile = tileFor(this.mats, mat);
+      const circ = Math.PI * (r0 + r1);
+      const o = this.uvRng();
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * circ) / tile + o, (uv.getY(i) * len) / tile);
+    }
+    geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+    geo.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+    this.commitBounded(geo, mat, opts);
+  }
+
+  /**
+   * Sagging line from `a` to `b` (parabola, `sag` metres at mid-span) as `segments` straight
+   * tubes. Returns the sample points so things can hang from it.
+   */
+  catenary(a: Vec3, b: Vec3, sag: number, r: number, segments: number, opts: BoxOpts = {}): Vec3[] {
+    const pts: Vec3[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t - 4 * sag * t * (1 - t), a[2] + (b[2] - a[2]) * t]);
+    }
+    for (let i = 0; i < segments; i++) this.tube(pts[i], pts[i + 1], r, r, { ...opts, segments: 5, open: true });
+    return pts;
+  }
+
+  /**
+   * Block-letter sign in a vertical plane: `origin` is the bottom-left corner of the first
+   * letter as read by someone standing in front of it, `u` the direction the text runs, `h` the
+   * letter height, `thick` the depth of the strokes. Glyphs are 5×7 cells with 1-cell strokes.
+   */
+  signLetters(word: string, origin: Vec3, u: Vec3, h: number, thick: number, opts: BoxOpts = {}): number {
+    const cell = h / 7;
+    const frame = Kit.frame(u);
+    const mat = opts.mat ?? "dark";
+    let advance = 0;
+    const stroke = (u0: number, v0: number, u1: number, v1: number) => {
+      const du = u1 - u0;
+      const dv = v1 - v0;
+      const axisAligned = Math.abs(du) < 1e-6 || Math.abs(dv) < 1e-6;
+      const len = Math.hypot(du, dv) + (axisAligned ? 1 : 0.35);
+      const geo = new THREE.BoxGeometry(len * cell, cell, thick);
+      this.tileBoxUVs(geo, len * cell, cell, thick, mat);
+      geo.rotateZ(Math.atan2(dv, du));
+      geo.translate(((u0 + u1) / 2 + advance) * cell, ((v0 + v1) / 2) * cell, 0);
+      geo.applyMatrix4(frame);
+      geo.translate(origin[0], origin[1], origin[2]);
+      this.commitBounded(geo, mat, opts);
+    };
+    for (const ch of word.toUpperCase()) {
+      const g = GLYPHS[ch];
+      if (g) for (const s of g) stroke(s[0], s[1], s[2], s[3]);
+      advance += 6.3;
+    }
+    // World length of the sign along `u`, for framing it.
+    return (advance - 1.3) * cell;
   }
 
   /**
