@@ -599,8 +599,18 @@ export class Kit {
       else if (edge === "e") { min = [o.x1 - t, o.top, o.z0]; max = [o.x1, o.top + h, o.z1]; }
       else { min = [o.x0, o.top, o.z0]; max = [o.x0 + t, o.top + h, o.z1]; }
       if (isAccent) {
-        this.box(min, [max[0], max[1] - PAINT_T, max[2]], { ...common, tint: PARAPET_TINT });
-        this.box([min[0], max[1] - PAINT_T, min[2]], max, { ...common, mat: "paint", surface: "paint" });
+        // Painted concrete kerb: the body is textured concrete for (almost) the full lip height,
+        // and the safety-orange paint is a thin sheet on the top face only, inset 1 cm, so no
+        // flat untextured band ever shows on the sides. Collision is unchanged from the old
+        // two-box build (concrete body + PAINT_T "paint" slab on top).
+        const sheet = 0.012;
+        const inset = 0.01;
+        this.box(min, [max[0], max[1] - sheet, max[2]], { ...common, tint: PARAPET_TINT, collide: false });
+        this.box([min[0] + inset, max[1] - sheet, min[2] + inset], [max[0] - inset, max[1], max[2] - inset], { ...common, mat: "paint", collide: false });
+        if (collide) {
+          this.world.add(min, [max[0], max[1] - PAINT_T, max[2]], "concrete", o.tag);
+          this.world.add([min[0], max[1] - PAINT_T, min[2]], max, "paint", o.tag);
+        }
       } else {
         this.box(min, max, { ...common, tint: PARAPET_TINT });
       }

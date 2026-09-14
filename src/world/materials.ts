@@ -177,10 +177,15 @@ export function createMaterials(): MaterialSet {
   });
   patchMaterial(metal);
 
-  // Safety orange, pushed redder so it still pops against warm sunlit concrete.
+  // Safety orange, pushed redder so it still pops against warm sunlit concrete. It borrows the
+  // concrete grain as bump + roughness (not albedo) so painted surfaces read as paint over
+  // concrete instead of a flat plastic band, while the colour stays pure.
   const paint = new THREE.MeshStandardMaterial({
     color: 0xd4691c,
-    roughness: 0.8,
+    roughnessMap: rough,
+    bumpMap: map,
+    bumpScale: 0.5,
+    roughness: 0.85,
     metalness: 0,
     envMapIntensity: 0.25,
   });
