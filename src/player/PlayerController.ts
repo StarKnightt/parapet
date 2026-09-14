@@ -2,7 +2,7 @@
  * First-person body. Owns position, velocity, yaw/pitch and the locomotion state machine.
  * Runs inside the fixed step; the camera rig reads it at render time with interpolation.
  *
- * Milestone 1: ground / air with sprint, jump, coyote time, jump buffering, auto step-up,
+ * Milestone 1: ground / air with sprint-by-default (Shift walks), jump, coyote time, jump buffering, auto step-up,
  * landing classification and stride tracking. Parkour moves (mantle, slide, wall-run) plug in
  * as additional states in `src/player/moves/`.
  */
@@ -175,7 +175,9 @@ export class PlayerController {
     const hasInput = this.wish.lengthSq() > 0;
     if (hasInput) this.wish.normalize();
 
-    const sprinting = input.sprint && input.moveZ > 0 && !this.crouched;
+    // Running is the default: any forward-ish intent (W, with or without a strafe) goes at sprint
+    // speed unless Shift is held to walk. Pure strafing and backpedalling stay at walking pace.
+    const sprinting = !input.walk && input.moveZ > 0 && !this.crouched;
     this.sprintBlend = moveToward(this.sprintBlend, sprinting && hasInput ? 1 : 0, dt / 0.25);
 
     if (input.consume("jump")) this.jumpBuffer = PLAYER.jumpBuffer;

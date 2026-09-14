@@ -60,17 +60,26 @@ const report = (name, value, expect, ok) => {
 // Calibration pad lane at z = -13 is free of step blocks (they start at z = -12).
 const LANE = -13;
 
-// ---- 1. sprint speed ----------------------------------------------------------------
+// ---- 1. run speed (plain W: running is the default) ----------------------------------
 await pose(-3, 20, LANE, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 const run = await sample(1500);
 await releaseAll();
 const topSpeed = Math.max(...run.map((s) => s.speed));
 const t85 = run.find((s) => s.speed > 8.4)?.t ?? null;
-report("sprint top speed m/s", topSpeed.toFixed(2), "8.5", Math.abs(topSpeed - 8.5) < 0.1);
+report("run top speed m/s (W)", topSpeed.toFixed(2), "8.5", Math.abs(topSpeed - 8.5) < 0.1);
 report("time to 8.4 m/s", t85 === null ? "never" : t85.toFixed(2) + "s", "< 0.3s", t85 !== null && t85 < 0.3);
+
+// ---- 1a. walk speed (Shift held slows to walking pace) --------------------------------
+await pose(-3, 20, LANE, 90);
+await sleep(300);
+await key("KeyW", true);
+await key("ShiftLeft", true);
+const walk = await sample(1200);
+await releaseAll();
+const walkTop = Math.max(...walk.map((s) => s.speed));
+report("walk speed m/s (W+Shift)", walkTop.toFixed(2), "5.5", Math.abs(walkTop - 5.5) < 0.1);
 
 // ---- 1b. strafe direction (yaw 0 looks -z, D must move +x) --------------------------
 await pose(-3, 20, LANE + 4, 0);
@@ -95,11 +104,10 @@ report("jump apex m", apex.toFixed(3), "1.25", Math.abs(apex - 1.25) < 0.05);
 report("airtime s", landed ? (landed.t - jump[left].t).toFixed(2) : "n/a", "0.6–0.75", landed && landed.t - jump[left].t > 0.58 && landed.t - jump[left].t < 0.78);
 report("grounded transitions", flicker, "≤ 2 (no flicker)", flicker <= 2);
 
-// ---- 3. sprint-jump range ----------------------------------------------------------
+// ---- 3. run-jump range (plain W) ---------------------------------------------------
 await pose(-3, 20, LANE, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let takeoff = null;
 let landing = null;
 let jumped = false;
@@ -118,7 +126,7 @@ await sample(3000, async (s) => {
 });
 await releaseAll();
 const range = takeoff !== null && landing !== null ? takeoff - landing : NaN;
-report("sprint-jump range m", range.toFixed(2), "5.5–6.0", range > 5.4 && range < 6.1);
+report("run-jump range m", range.toFixed(2), "5.5–6.0", range > 5.4 && range < 6.1);
 
 // ---- 4. step-up -----------------------------------------------------------------------
 // Walk west into the 0.4 m step at x∈[-9,-7], z∈[-6,-4] (index 1 → z = -12+3 = -9..-7? use 0.4 block at i=1: z -9..-7)
@@ -140,10 +148,11 @@ const wallMantled = wall.some((s) => s.state === "mantle");
 report("0.6 m block mantles", `${wallY.toFixed(2)} mantle=${wallMantled}`, "0.60 via mantle", Math.abs(wallY - 0.6) < 0.03 && wallMantled);
 
 // ---- 5. mantle (M2) ---------------------------------------------------------------------
-// 1.25 m block at i=5 → z 3..5. Walk into it: should end on top (y = 21.25).
+// 1.25 m block at i=5 → z 3..5. Walk (Shift) into it: should end on top (y = 21.25).
 await pose(-4, 20, 4, 90);
 await sleep(300);
 await key("KeyW", true);
+await key("ShiftLeft", true);
 const m1 = await sample(1500, (s) => (s.grounded && s.pos[1] > 21.2 ? "stop" : undefined));
 await releaseAll();
 const m1End = m1[m1.length - 1];
@@ -175,12 +184,11 @@ const idle = await stats();
 report("no mantle without input", `y=${idle.pos[1].toFixed(2)} ${idle.state}`, "y=20.00", Math.abs(idle.pos[1] - 20) < 0.01);
 
 // ---- 6. slide (M2) ----------------------------------------------------------------------
-// Sprint west along the lane, slide at x < -8: expect crouch height, speed boost, and passing
+// Run west along the lane, slide at x < -8: expect crouch height, speed boost, and passing
 // under the 1.2 m bar at x ≈ -19.3 (a standing body would be stopped there).
 await pose(-3, 20, LANE, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let slid = false;
 let slideStart = null;
 const sl = await sample(3500, async (s) => {
@@ -214,7 +222,6 @@ report("standing blocked by bar", `x=${blocked.pos[0].toFixed(2)} h=${blocked.he
 await pose(-3, 20, LANE + 2, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 await sleep(700);
 await key("ControlLeft", true);
 await sleep(400);
@@ -226,11 +233,10 @@ await releaseAll();
 report("crouch → stand", `h=${mid.height} → ${stood.height}`, "0.95 → 1.8", mid.height === 0.95 && stood.height === 1.8);
 
 // ---- 7. wall-run (M3) -------------------------------------------------------------------
-// Tall wall z∈[10,10.4], x∈[-20,-2], top 26. Sprint west hugging it (body at z 9.2..9.9), jump.
+// Tall wall z∈[10,10.4], x∈[-20,-2], top 26. Run west hugging it (body at z 9.2..9.9), jump.
 await pose(-10, 20, 9.55, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let wj = false;
 const wr = await sample(3000, async (s) => {
   if (!wj && s.pos[0] < -11) {
@@ -254,7 +260,6 @@ report("wall-run extends air", `air ${airTime.toFixed(2)}s apex ${wrApex.toFixed
 await pose(-10, 20, 9.55, 90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let phase = 0;
 const wjr = await sample(3000, async (s) => {
   if (phase === 0 && s.pos[0] < -11) {
@@ -282,11 +287,10 @@ const walkBy = await stats();
 await releaseAll();
 report("no wall-run on ground", walkBy.state, "ground", walkBy.state === "ground" && Math.abs(walkBy.pos[1] - 20) < 0.01);
 
-// ---- 8. course A → B: vault the vent, slide under the rack, sprint the 6.5 m gap -------
+// ---- 8. course A → B: vault the vent, slide under the rack, run the 6.5 m gap (plain W) --
 await pose(3, 20, 0, -90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let slideOn = false;
 let slideOff = false;
 let j2 = false;
@@ -319,7 +323,6 @@ report("A→B: vault, slide, gap", `x=${end.pos[0].toFixed(1)} y=${end.pos[1].to
 await pose(40, 18.5, 5, -90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let pj = false;
 const pent = await sample(2500, async (s) => {
   if (!pj && s.pos[0] > 42.6) {
@@ -337,7 +340,6 @@ report("penthouse mantle 2.1 m", `x=${pEnd.pos[0].toFixed(1)} y=${pEnd.pos[1].to
 await pose(78, 15.5, -8.2, -90);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let cj = false;
 let cjT = 0;
 const cd = await sample(4000, async (s) => {
@@ -356,11 +358,10 @@ const cdWall = cd.filter((s) => s.state === "wallrun");
 const cdWallTime = cdWall.length ? cdWall[cdWall.length - 1].t - cdWall[0].t : 0;
 report("C→D wall-run crossing", `x=${cdEnd.pos[0].toFixed(1)} y=${cdEnd.pos[1].toFixed(2)} wall=${cdWallTime.toFixed(2)}s`, "lands on D (x>98.5, y≈15 or lip 15.35), wall>0.6 s", cdEnd.grounded && cdEnd.pos[0] > 98.5 && cdEnd.pos[1] > 14.95 && cdEnd.pos[1] < 15.4 && cdWallTime > 0.6);
 
-// ---- 11. C → D without the wall: sprint-jump alone must NOT make it -------------------
+// ---- 11. C → D without the wall: run-jump alone must NOT make it ----------------------
 await pose(78, 15.5, 4.2 - 3, -90); // lane south of the beam, away from the facade
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 let nj = false;
 let njT = 0;
 const nd = await sample(3500, async (s) => {
@@ -403,7 +404,6 @@ const until = async (pred, ms) => {
 await pose(17.4, 20, -2, 180);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 await until((s) => s.pos[2] > 5.2, 3000);
 await tap("Space");
 const offLanded = await until((s) => s.grounded && s.pos[2] > 13, 4000);
@@ -412,11 +412,10 @@ await sleep(1200);
 const offStayed = await stats();
 report("off-route: land and stay", `y=${offStayed.pos[1].toFixed(2)} tag=${offStayed.groundTag} falls=${offStayed.falls}`, "grounded on offroute, no respawn", !!offLanded && offStayed.grounded && offStayed.groundTag === "offroute" && offStayed.falls === offLanded.falls);
 
-// Back: sprint off the kerb onto the landing slab, then the ledge ladder up A's south face.
+// Back: run off the kerb onto the landing slab, then the ledge ladder up A's south face.
 await pose(17.4, 15, 18, 0);
 await sleep(300);
 await key("KeyW", true);
-await key("ShiftLeft", true);
 await until((s) => s.pos[2] < 15.0, 3000);
 await tap("Space");
 const onSlab = await until((s) => s.grounded && s.pos[2] < 11 && s.pos[1] > 14.9, 3000);

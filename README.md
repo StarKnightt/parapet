@@ -11,9 +11,9 @@ pnpm dev          # http://localhost:5311
 pnpm build        # static site in dist/
 ```
 
-Controls: `WASD` move · `Shift` sprint · `Space` jump · `Ctrl`/`C` slide · `M` mute · `R` restart · `F3` debug readout · `1–9` teleport to checkpoints (dev).
+Controls: `WASD` move (running is the default) · `Shift` walk · `Space` jump · `Ctrl`/`C` slide · `M` mute · `R` restart · `F3` debug readout · `1–9` teleport to checkpoints (dev).
 
-Moves: push into a chest-high ledge to mantle; hold slide at speed to drop under pipe racks (slide-jump keeps the speed); jump beside a tall wall while sprinting to wall-run, jump again to kick off it.
+Moves: push into a chest-high ledge to mantle; hold slide at speed to drop under pipe racks (slide-jump keeps the speed); jump beside a tall wall while running to wall-run, jump again to kick off it. Hold `Shift` to walk for precision on beams and ledges.
 
 Off the line is allowed. Neighbour roofs, buttress tops and cantilevers are places to land and
 stand; the only death is the fall (14 m below the lower of your checkpoint and the last surface
@@ -39,7 +39,7 @@ src/
 tools/
   shoot.mjs  headless GPU captures of named poses → shots/
   bot.mjs    scripted playtest: speed, jump apex/range, step-up, mantle, slide, wall-run,
-             A→B, C→D, respawn, off-route land/stay and the ledge-ladder return (28 checks)
+             A→B, C→D, respawn, off-route land/stay and the ledge-ladder return (29 checks)
 ```
 
 Everything is procedural: no models, no textures, no audio files. Collision boxes are the

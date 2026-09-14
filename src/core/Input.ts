@@ -69,7 +69,8 @@ export class Input {
   get moveZ(): number {
     return (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) - (this.keys.has("KeyS") || this.keys.has("ArrowDown") ? 1 : 0);
   }
-  get sprint(): boolean {
+  /** Shift held: drop from the default run to walking pace (precision on beams and ledges). */
+  get walk(): boolean {
     return this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
   }
   get jumpHeld(): boolean {

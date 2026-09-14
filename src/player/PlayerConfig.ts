@@ -10,7 +10,9 @@ export const PLAYER = {
   height: 1.8,
   eyeHeight: 1.66,
 
+  /** Shift held, or strafing / backpedalling without forward input. */
   walkSpeed: 5.5,
+  /** Default forward speed (plain W). */
   sprintSpeed: 8.5,
   /** Ground acceleration / deceleration (m/s²). 8.5 m/s in ~0.14 s; stop in ~0.1 s. */
   groundAccel: 60,
