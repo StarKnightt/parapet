@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { createRng } from "../core/math";
 import type { CollisionWorld, Surface, Vec3 } from "./CollisionWorld";
-import type { MaterialKey, MaterialSet } from "./materials";
+import { tileFor, type MaterialKey, type MaterialSet } from "./materials";
 
 export interface BoxOpts {
   mat?: MaterialKey;
@@ -85,6 +85,8 @@ const PAINT_T = 0.05;
 export class Kit {
   private readonly buckets = new Map<string, THREE.BufferGeometry[]>();
   private readonly rng = createRng(1234);
+  /** Texture-offset / dressing randomness, separate so extra dressing never reshuffles massing. */
+  private readonly uvRng = createRng(4321);
   private readonly color = new THREE.Color();
   private readonly meshes: THREE.Mesh[] = [];
   readonly lights: THREE.PointLight[] = [];
@@ -109,17 +111,17 @@ export class Kit {
     const geo = new THREE.BoxGeometry(w, h, d);
     geo.translate(min[0] + w / 2, min[1] + h / 2, min[2] + d / 2);
 
-    // Per-face UV scaling so the concrete tiles at a constant world size.
-    const tile = this.mats.concreteTile;
+    // Per-face UV scaling so each material's texture tiles at a constant world size.
+    const tile = tileFor(this.mats, mat);
     const uv = geo.attributes.uv as THREE.BufferAttribute;
     const dims: [number, number][] = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
-    const ox = this.rng();
-    const oy = this.rng();
+    // One offset for both axes so panel seams line up around a box (pipes, posts, rails).
+    const o = this.uvRng();
     for (let f = 0; f < 6; f++) {
       const [du, dv] = dims[f];
       for (let v = 0; v < 4; v++) {
         const i = f * 4 + v;
-        uv.setXY(i, (uv.getX(i) * du) / tile + ox, (uv.getY(i) * dv) / tile + oy);
+        uv.setXY(i, (uv.getX(i) * du) / tile + o, (uv.getY(i) * dv) / tile + o);
       }
     }
 
@@ -166,14 +168,14 @@ export class Kit {
   }
 
   /** Box-projected UVs in world metres (matches the per-face tiling of `box`). */
-  private projectUVs(geo: THREE.BufferGeometry): void {
+  private projectUVs(geo: THREE.BufferGeometry, mat: MaterialKey = "concrete"): void {
     const g = geo.index ? geo.toNonIndexed() : geo;
     g.computeVertexNormals();
     const pos = g.attributes.position as THREE.BufferAttribute;
     const nor = g.attributes.normal as THREE.BufferAttribute;
     const n = pos.count;
     const uv = new Float32Array(n * 2);
-    const tile = this.mats.concreteTile;
+    const tile = tileFor(this.mats, mat);
     for (let i = 0; i < n; i++) {
       const nx = Math.abs(nor.getX(i));
       const ny = Math.abs(nor.getY(i));
@@ -208,10 +210,39 @@ export class Kit {
       geo.rotateY(-Math.PI / 2);
       geo.translate(Math.max(from, to), 0, 0);
     }
-    this.projectUVs(geo);
+    this.projectUVs(geo, opts.mat ?? "concrete");
     geo.computeBoundingBox();
     const bb = geo.boundingBox!;
     this.commit(geo, opts.mat ?? "concrete", opts.tint ?? 0xffffff, opts.shadow !== false, bb.min.y, bb.max.y - bb.min.y);
+  }
+
+  /**
+   * Vertical cylinder (visual only): `open` leaves the ends off for rings/ducts. Side UVs come
+   * from the cylinder's own unwrap scaled to the material tile so seams wrap around the drum.
+   */
+  cylinder(cx: number, y0: number, cz: number, r: number, h: number, opts: BoxOpts & { open?: boolean; segments?: number } = {}): void {
+    if (r <= 0 || h <= 0) return;
+    const mat = opts.mat ?? "metal";
+    const seg = opts.segments ?? 20;
+    const geo = new THREE.CylinderGeometry(r, r, h, seg, 1, opts.open ?? false);
+    const tile = tileFor(this.mats, mat);
+    const uv = geo.attributes.uv as THREE.BufferAttribute;
+    const circ = 2 * Math.PI * r;
+    const ox = this.uvRng();
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, (uv.getX(i) * circ) / tile + ox, (uv.getY(i) * h) / tile);
+    geo.translate(cx, y0 + h / 2, cz);
+    this.commit(geo, mat, opts.tint ?? 0xffffff, opts.shadow !== false, y0, h);
+  }
+
+  /** Horizontal disc facing up at `y` (visual only), box-projected UVs. */
+  disc(cx: number, y: number, cz: number, r: number, opts: BoxOpts & { segments?: number } = {}): void {
+    if (r <= 0) return;
+    const mat = opts.mat ?? "dark";
+    const geo = new THREE.CircleGeometry(r, opts.segments ?? 20);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(cx, y, cz);
+    this.projectUVs(geo, mat);
+    this.commit(geo, mat, opts.tint ?? 0xffffff, opts.shadow !== false, y, 0.05);
   }
 
   /**
@@ -559,7 +590,7 @@ export class Kit {
     }
     this.projectUVs(ring);
     this.commit(ring, "concrete", tint, true, y - r, r * 2);
-    this.projectUVs(grille);
+    this.projectUVs(grille, "dark");
     this.commit(grille, "dark", 0xffffff, false, y - r, r * 2);
   }
 
@@ -670,16 +701,78 @@ export class Kit {
     }
   }
 
-  /** Rooftop AC unit: metal cabinet with a lighter top grille frame. Collidable. */
+  /**
+   * Rooftop AC unit: painted-steel cabinet (the only collider — its extents are what the
+   * player mantles and stands on) dressed with folded-edge corner trims, a raised lid with
+   * one or two fan housings (light rim ring, dark grille, hub), framed louvre panels on the
+   * long faces, a conduit + junction box on one end, and a concrete kerb.
+   */
   acUnit(cx: number, y0: number, cz: number, w: number, h: number, d: number, tag?: string): void {
     this.boxAt(cx, y0, cz, w, h, d, { mat: "metal", tint: 0xb9bcbf, tag });
-    // Top grille frame, a dark louvre band on the long face, and a kerb it sits on.
-    this.boxAt(cx, y0 + h, cz, w * 0.8, 0.08, d * 0.8, { mat: "dark", collide: false });
-    const louvreY0 = y0 + h * 0.3;
-    const louvreY1 = y0 + h * 0.75;
-    this.box([cx - w * 0.38, louvreY0, cz - d / 2 - 0.02], [cx + w * 0.38, louvreY1, cz - d / 2], { mat: "dark", collide: false, shadow: false });
-    this.box([cx - w * 0.38, louvreY0, cz + d / 2], [cx + w * 0.38, louvreY1, cz + d / 2 + 0.02], { mat: "dark", collide: false, shadow: false });
+    const vis: BoxOpts = { mat: "metal", collide: false };
+    const trim = 0xd3d6d8;
+    const frame = 0xa6a9ab;
+    // Kerb it sits on.
     this.boxAt(cx, y0, cz, w + 0.2, 0.12, d + 0.2, { tint: 0x8c8a85, collide: false });
+    // Corner trims (folded panel edges), 3 cm proud on both faces of each vertical edge.
+    const t = 0.06;
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const ex = cx + (sx * w) / 2;
+        const ez = cz + (sz * d) / 2;
+        this.box([ex - t / 2, y0 + 0.12, ez - t / 2], [ex + t / 2, y0 + h + 0.02, ez + t / 2], { ...vis, tint: trim });
+      }
+    }
+    // Raised lid with the fan housing(s): the long axis takes two fans when it is clearly oblong.
+    const lidY = y0 + h;
+    this.boxAt(cx, lidY, cz, w * 0.88, 0.06, d * 0.88, { ...vis, tint: 0xc3c6c8 });
+    const longX = w >= d;
+    const long = longX ? w : d;
+    const short = longX ? d : w;
+    const fans = long / short >= 1.7 ? 2 : 1;
+    const r = Math.min(short * 0.33, (long / fans) * 0.36);
+    for (let i = 0; i < fans; i++) {
+      const c = -long / 2 + ((i + 0.5) * long) / fans;
+      const fx = longX ? cx + c : cx;
+      const fz = longX ? cz : cz + c;
+      this.cylinder(fx, lidY + 0.06, fz, r, 0.16, { ...vis, tint: trim, open: true, segments: 24 });
+      // Grille recessed 3 cm inside the ring, hub on top of it.
+      this.disc(fx, lidY + 0.19, fz, r * 0.96, { mat: "dark", collide: false, shadow: false, segments: 24 });
+      this.cylinder(fx, lidY + 0.19, fz, r * 0.16, 0.05, { ...vis, tint: 0x8a8d90, segments: 12 });
+    }
+    // Louvre panels on the ±z faces: dark slatted recess with a lighter frame around it.
+    const lx0 = cx - w * 0.38;
+    const lx1 = cx + w * 0.38;
+    const ly0 = y0 + h * 0.3;
+    const ly1 = y0 + h * 0.75;
+    for (const side of [-1, 1]) {
+      const face = cz + (side * d) / 2;
+      const out = face + side * 0.02;
+      const lo = Math.min(face, out);
+      const hi = Math.max(face, out);
+      this.box([lx0, ly0, lo], [lx1, ly1, hi], { mat: "dark", collide: false, shadow: false });
+      const fo = face + side * 0.045;
+      const flo = Math.min(face, fo);
+      const fhi = Math.max(face, fo);
+      const fw = 0.05;
+      this.box([lx0 - fw, ly1, flo], [lx1 + fw, ly1 + fw, fhi], { ...vis, tint: frame, shadow: false });
+      this.box([lx0 - fw, ly0 - fw, flo], [lx1 + fw, ly0, fhi], { ...vis, tint: frame, shadow: false });
+      this.box([lx0 - fw, ly0, flo], [lx0, ly1, fhi], { ...vis, tint: frame, shadow: false });
+      this.box([lx1, ly0, flo], [lx1 + fw, ly1, fhi], { ...vis, tint: frame, shadow: false });
+    }
+    // Conduit up one end face into a junction box; the end is picked per unit.
+    const ex = this.uvRng() < 0.5 ? -1 : 1;
+    const faceX = cx + (ex * w) / 2;
+    const pz = cz + d * 0.22;
+    const pr = 0.035;
+    const px = faceX + ex * (0.03 + pr);
+    const boxY = y0 + h * 0.62;
+    this.box([px - pr, y0 + 0.12, pz - pr], [px + pr, boxY, pz + pr], { ...vis, tint: 0x5c5f63 });
+    const jx0 = Math.min(faceX, faceX + ex * 0.08);
+    const jx1 = Math.max(faceX, faceX + ex * 0.08);
+    this.box([jx0, boxY - 0.02, pz - 0.11], [jx1, boxY + 0.2, pz + 0.11], { ...vis, tint: 0x6a6d70 });
+    // Stub from the pipe into the box.
+    this.box([Math.min(faceX, px), boxY - 0.02, pz - pr], [Math.max(faceX, px), boxY + 0.05, pz + pr], { ...vis, tint: 0x5c5f63 });
   }
 
   /** Horizontal pipe rack: N pipes on posts. `clearance` is roof→bottom of lowest pipe. */
@@ -688,14 +781,27 @@ export class Kit {
     const postT = 0.24;
     const total = clearance + pipes * (dia + 0.1) + 0.2;
     const n = Math.max(2, Math.round((z1 - z0) / 6) + 1);
+    const posts: number[] = [];
     for (let i = 0; i < n; i++) {
       const z = z0 + ((z1 - z0) * i) / (n - 1);
       const zc = Math.min(Math.max(z, z0 + postT / 2), z1 - postT / 2);
+      posts.push(zc);
       this.boxAt(x, y0, zc, postT, total, postT, { mat: "metal", tint: 0x5c5f63 });
+      // Base plate (visual).
+      this.boxAt(x, y0, zc, postT + 0.2, 0.04, postT + 0.2, { mat: "metal", tint: 0x6a6d70, collide: false });
     }
     for (let p = 0; p < pipes; p++) {
       const y = y0 + clearance + p * (dia + 0.1);
       this.box([x - dia / 2, y, z0], [x + dia / 2, y + dia, z1], { mat: "metal", tint: p === 1 ? 0x8a8d90 : 0x6a6d70 });
+      // Saddle clamps where the pipe crosses a post, flanged joints between posts (visual).
+      for (let i = 0; i < posts.length; i++) {
+        const zc = posts[i];
+        this.box([x - dia / 2 - 0.03, y - 0.03, zc - 0.07], [x + dia / 2 + 0.03, y + dia + 0.03, zc + 0.07], { mat: "metal", tint: 0x3f4245, collide: false, shadow: false });
+        if (i + 1 < posts.length) {
+          const zf = (zc + posts[i + 1]) / 2 + (p - (pipes - 1) / 2) * 0.6;
+          this.box([x - dia / 2 - 0.05, y - 0.05, zf - 0.05], [x + dia / 2 + 0.05, y + dia + 0.05, zf + 0.05], { mat: "metal", tint: 0x5c5f63, collide: false, shadow: false });
+        }
+      }
     }
     // Top rail tying the posts.
     this.box([x - postT / 2, y0 + total - 0.12, z0], [x + postT / 2, y0 + total, z1], { mat: "metal", tint: 0x5c5f63 });
@@ -704,9 +810,22 @@ export class Kit {
   /** Low concrete vent box / plant plinth (vault target). */
   ventBox(x0: number, x1: number, y0: number, z0: number, z1: number, h: number): void {
     this.box([x0, y0, z0], [x1, y0 + h, z1], { tint: 0xa6a29b });
-    // Louvre strip on the long faces.
-    this.box([x0 - 0.02, y0 + h * 0.35, z0 + 0.3], [x0, y0 + h * 0.8, z1 - 0.3], { mat: "dark", collide: false, shadow: false });
-    this.box([x1, y0 + h * 0.35, z0 + 0.3], [x1 + 0.02, y0 + h * 0.8, z1 - 0.3], { mat: "dark", collide: false, shadow: false });
+    // Slatted louvre strip on the long faces, in a painted-steel frame (visual).
+    const ly0 = y0 + h * 0.35;
+    const ly1 = y0 + h * 0.8;
+    const fw = 0.05;
+    for (const [face, out] of [[x0, -1], [x1, 1]] as [number, number][]) {
+      const lo = Math.min(face, face + out * 0.02);
+      const hi = Math.max(face, face + out * 0.02);
+      this.box([lo, ly0, z0 + 0.3], [hi, ly1, z1 - 0.3], { mat: "dark", collide: false, shadow: false });
+      const flo = Math.min(face, face + out * 0.045);
+      const fhi = Math.max(face, face + out * 0.045);
+      const f: BoxOpts = { mat: "metal", tint: 0x8a8d90, collide: false, shadow: false };
+      this.box([flo, ly1, z0 + 0.3 - fw], [fhi, ly1 + fw, z1 - 0.3 + fw], f);
+      this.box([flo, ly0 - fw, z0 + 0.3 - fw], [fhi, ly0, z1 - 0.3 + fw], f);
+      this.box([flo, ly0, z0 + 0.3 - fw], [fhi, ly1, z0 + 0.3], f);
+      this.box([flo, ly0, z1 - 0.3], [fhi, ly1, z1 - 0.3 + fw], f);
+    }
   }
 
   finalize(): THREE.Mesh[] {

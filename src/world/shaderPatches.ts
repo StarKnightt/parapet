@@ -7,6 +7,9 @@
  * 2. Weathered concrete detail (concrete only): world-space tint noise (warm grey ↔ ochre),
  *    dark panel seams on face-tangent axes, dirt gradient at the foot of each box and drip
  *    darkening under its cap, and stronger staining on horizontal surfaces.
+ * 3. Weathered painted steel (metal only): warm/cool paint drift and bleached patches in
+ *    world space, rust-brown grime at the foot of each cabinet, drips under the top edge,
+ *    a second grain octave to hide the tile repeat, and a dust film + rust rings on tops.
  */
 import * as THREE from "three";
 import { SUN_DIR } from "./Sky";
@@ -134,8 +137,69 @@ const CONCRETE_DETAIL = /* glsl */ `
   }
 `;
 
+const METAL_DETAIL = /* glsl */ `
+  {
+    vec3 n = abs(normalize(vWNormal));
+    vec3 p = vWorldPos;
+    float vert = 1.0 - n.y;
+    float horiz = smoothstep(0.6, 1.0, n.y);
+
+    // World-space paint variation: slow warm/cool drift plus a per-face jitter, so a row of
+    // identical cabinets in the same tint never reads as clones.
+    float t1 = sin(p.x * 0.23 + p.y * 0.31) * sin(p.z * 0.19 - p.y * 0.17) * 0.5 + 0.5;
+    float t2 = sin(p.x * 0.071 + 2.3) * sin(p.z * 0.083 + p.y * 0.05) * 0.5 + 0.5;
+    vec3 cool = vec3(0.94, 0.96, 1.0);
+    vec3 warm = vec3(1.04, 1.0, 0.94);
+    vec3 tint = mix(cool, warm, t1 * 0.55 + t2 * 0.45);
+    vec3 sn = sign(vWNormal);
+    tint *= 1.0 + dot(sn, vec3(0.03, 0.0, -0.03));
+    // Fade patches: bleached paint in blotches.
+    float fade = smoothstep(0.35, 0.95, sin(p.x * 0.9 + p.y * 0.7 + 1.0) * sin(p.z * 0.8 - p.y * 0.5 + 2.0));
+    tint *= 1.0 + fade * 0.09;
+    diffuseColor.rgb *= tint;
+
+    // Face-tangent coordinate along the panel for streaks.
+    float u = n.x > 0.5 ? p.z : p.x;
+    float sk = sin(u * 31.0) * sin(u * 9.3 + 1.3) * sin(u * 3.7 + p.y * 0.1);
+    float streak = smoothstep(0.2, 0.95, sk * 0.5 + 0.5);
+
+    #ifdef USE_MAP
+    // Second grain octave so the tile repeat is hidden on long runs of pipe and rail.
+    vec3 detail = texture2D(map, vMapUv * 2.63 + 0.47).rgb;
+    diffuseColor.rgb *= mix(vec3(1.0), detail * 1.45, 0.35);
+    // Rust from the map is orange in the red channel: strengthen it where water runs.
+    float rustiness = clamp((detail.r - detail.b) * 4.0, 0.0, 1.0);
+    #else
+    float rustiness = 0.0;
+    #endif
+
+    #ifdef USE_BOXFRAC
+    // Grime and splash-back at the foot; drips under the top edge. Vertical faces only.
+    float footFrac = smoothstep(0.5, 0.0, vBox.x);
+    float foot = footFrac * min(vBox.y, 2.5) / 2.5;
+    float cap = smoothstep(0.82, 1.0, vBox.x);
+    diffuseColor.rgb *= 1.0 - vert * foot * (0.28 + 0.22 * streak);
+    // Foot grime is brown-orange (rust wash + dirt), not neutral.
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.9, 0.72, 0.52), vert * foot * (0.35 + 0.4 * rustiness));
+    diffuseColor.rgb *= 1.0 - vert * cap * (0.1 + 0.25 * streak);
+    #else
+    diffuseColor.rgb *= 1.0 - vert * streak * 0.1;
+    #endif
+    // Lighter mid-panel streaking.
+    diffuseColor.rgb *= 1.0 - vert * streak * 0.08;
+
+    // Tops: dust film (paler, warmer) with standing-water rings and a rust ring or two.
+    float dust = sin(p.x * 0.7 + 1.0) * sin(p.z * 0.6 + 0.4) * 0.5 + 0.5;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.08, 1.04, 0.96) + vec3(0.02), horiz * (0.2 + 0.3 * dust));
+    float ring = smoothstep(0.7, 0.95, sin(p.x * 1.7 + 0.5) * sin(p.z * 1.5 + 1.2));
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.7, 0.5, 0.36), horiz * ring * 0.35);
+  }
+`;
+
 export interface PatchOptions {
   concrete?: boolean;
+  /** Weathered painted-steel detail (tint drift, foot grime, rust wash, dust on tops). */
+  metal?: boolean;
   boxFrac?: boolean;
 }
 
@@ -154,7 +218,9 @@ export function patchMaterial(mat: THREE.Material, opts: PatchOptions = {}): voi
       .replace("#include <fog_fragment>", FOG_FRAGMENT);
     if (opts.concrete) {
       shader.fragmentShader = shader.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n" + CONCRETE_DETAIL);
+    } else if (opts.metal) {
+      shader.fragmentShader = shader.fragmentShader.replace("#include <color_fragment>", "#include <color_fragment>\n" + METAL_DETAIL);
     }
   };
-  mat.customProgramCacheKey = () => `parapet-${opts.concrete ? "c" : "p"}-${opts.boxFrac ? "b" : ""}`;
+  mat.customProgramCacheKey = () => `parapet-${opts.concrete ? "c" : opts.metal ? "m" : "p"}-${opts.boxFrac ? "b" : ""}`;
 }
