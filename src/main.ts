@@ -1,4 +1,5 @@
 import { Game } from "./Game";
+import { wavedash } from "./wavedash";
 
 declare global {
   interface Window {
@@ -18,8 +19,10 @@ declare global {
 const canvas = document.getElementById("game") as HTMLCanvasElement;
 const hud = document.getElementById("hud") as HTMLElement;
 
+wavedash.progress(0.1);
 const game = new Game(canvas, hud);
 game.start();
+wavedash.ready();
 
 window.__parapet = {
   setPose: (x, y, z, yaw, pitch) => game.setPose(x, y, z, yaw, pitch),

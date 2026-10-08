@@ -19,6 +19,7 @@ import { Kit } from "./world/Kit";
 import { Lighting } from "./world/Lighting";
 import { createMaterials } from "./world/materials";
 import { Sky } from "./world/Sky";
+import { wavedash } from "./wavedash";
 
 const BEST_KEY = "parapet.best";
 const SPLITS_KEY = "parapet.splits";
@@ -69,6 +70,8 @@ export class Game {
   private finishT = -1;
   private vignette = 0.5;
   private falls = 0;
+  /** Debug teleports skip roofs; such runs stay off the leaderboard. */
+  private teleported = false;
   private fps = 60;
   private debugOn = false;
 
@@ -121,6 +124,7 @@ export class Game {
       },
       onWallRunEnd: () => this.rig.wallLean(0),
       onWallJump: () => {
+        wavedash.achieve("WALL_JUMP");
         this.rig.punchFov(4);
         this.body.wallJump();
         this.audio.wallJump();
@@ -162,6 +166,7 @@ export class Game {
     this.timeScale = 1;
     this.splits = [];
     this.falls = 0;
+    this.teleported = false;
     this.hud.setTimer(0, false);
     this.hud.showHint();
     this.hud.hideResults();
@@ -239,6 +244,14 @@ export class Game {
     else line = pick(LINES.slower);
     this.pendingResults = { time: this.time, best, newBest, splits, line };
 
+    if (!this.teleported) {
+      wavedash.submitScore("best-time", this.time * 1000);
+      wavedash.achieve("FIRST_FINISH");
+      if (this.falls === 0) wavedash.achieve("CLEAN_RUN");
+      if (this.time < 60) wavedash.achieve("UNDER_60");
+      if (this.time < 40) wavedash.achieve("UNDER_40");
+    }
+
     if (newBest) {
       localStorage.setItem(BEST_KEY, String(this.time));
       const saved = [...this.splits];
@@ -264,6 +277,7 @@ export class Game {
       const t = this.course.teleports[tp - 1];
       this.player.teleport(t.pos[0], t.pos[1] + 0.05, t.pos[2], t.yaw);
       this.lastStoodY = t.pos[1];
+      this.teleported = true;
     }
 
     this.player.fixedUpdate(dt, this.input);
