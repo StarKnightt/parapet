@@ -229,3 +229,5 @@ GitHub Pages.
 ## Licence
 
 MIT — see [`LICENSE`](LICENSE).
+
+☕ like it? [buy me a coffee](https://buymeacoffee.com/prasenx) or [sponsor on github](https://github.com/sponsors/StarKnightt)
